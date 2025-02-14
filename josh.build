@@ -1,0 +1,23 @@
+
+
+int main() {
+    {
+        JBExecutable josh = {"embed"};
+        josh.sources = (const char *[]){"src/embed.c", NULL};
+        josh.build_folder = "build";
+        jb_build(&josh);
+
+        JB_RUN_CMD("./build/embed", "src/josh_build.h", "src/josh_build_embed.h");
+
+        remove("./build/embed");
+    }
+
+    {
+        JBExecutable josh = {"josh"};
+        josh.sources = (const char *[]){"src/main.c", NULL};
+        josh.build_folder = "build";
+        jb_build(&josh);
+    }
+
+    remove("src/josh_build_embed.h");
+}
