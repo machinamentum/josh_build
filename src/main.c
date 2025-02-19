@@ -25,28 +25,6 @@ const char josh_build_init_src_main[] = {
 };
 
 
-char *read_file(const char *path) {
-    FILE *f = fopen(path, "rb");
-
-    if (!f)
-        return NULL;
-
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    char *out = malloc(len + 1);
-
-    size_t read = fread(out, 1, len, f);
-
-    if (read != len)
-        return NULL;
-
-    out[len] = 0;
-
-    return out;
-}
-
 void write_file(const char *path, const char *text) {
      FILE *f = fopen(path, "wb");
 
@@ -66,35 +44,13 @@ int main(int argc, char *argv[]) {
     if (strcmp(argv[1], "build") == 0) {
 
         // Look for josh.build in current directory
-
-        char *build_source = read_file("josh.build");
-
-        if (!build_source) {
-            printf("Could not read josh.build in current directory\n");
-            return -1;
+        if (!jb_file_exists("josh.build")) {
+            printf("josh.build file not found\n");
+            exit(1);
         }
 
-        const char *josh_builder_file = "josh.build.c";
-
-        FILE *out = fopen(josh_builder_file, "wb");
-        const char *preamble = "#define JOSH_BUILD_IMPL\n#line 1 \"josh_build.h\"\n";
-        fwrite(preamble, 1, strlen(preamble), out);
-        fwrite(josh_build_src, 1, strlen(josh_build_src), out);
-        fputc('\n', out);
-        fputs("#line 1 \"josh.build.c\"\n", out);
-        fwrite(build_source, 1, strlen(build_source), out);
-        fclose(out);
-
-        JBExecutable josh = {"josh_builder"};
-        josh.sources = (const char *[]){josh_builder_file, NULL};
-        josh.cflags = (const char *[]){"-Wno-unknown-escape-sequence", NULL};
-        josh.build_folder = "build";
-        jb_build(&josh);
-
-        JB_RUN_CMD("./build/josh_builder");
-
-        remove(josh_builder_file);
-        // remove("./build/josh_builder");
+        josh_build(josh_build_src, "josh.build");
+        
         return 0;
     }
 
@@ -119,6 +75,43 @@ int main(int argc, char *argv[]) {
 
     if (strcmp(argv[1], "library") == 0) {
         puts(josh_build_src);
+        return 0;
+    }
+
+    if (strcmp(argv[1], "cc") == 0) {
+        JBToolchain *tc = jb_native_toolchain();
+        const char *target_opt = "--target=";
+        size_t target_opt_len = strlen(target_opt);
+        for (int i = 2; i < argc; i++) {
+            if (strncmp(argv[i], target_opt, target_opt_len) == 0) {
+                char *triple = jb_format_string("%.*s", strlen(argv[i]) - target_opt_len, argv[i] + target_opt_len);
+                tc = jb_find_toolchain_by_triple(triple);
+
+                if (!tc) {
+                    JB_FAIL("Could not find toolchain for %s", triple);
+                }
+            }
+        }
+
+        if (!tc->cc)
+            JB_FAIL("Toolchain missing C compiler");
+
+        JBVector(char *) cmd = {0};
+
+        JBVectorPush(&cmd, tc->cc);
+
+        // TODO check if clang is our compiler and append --target=
+        for (int i = 2; i < argc; i++) {
+            if (strncmp(argv[i], target_opt, target_opt_len) == 0) {
+
+            }
+            else {
+                JBVectorPush(&cmd, argv[i]);
+            }
+        }
+
+        jb_run(cmd.data, __FILE__, __LINE__);
+
         return 0;
     }
 

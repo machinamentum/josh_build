@@ -1,3 +1,8 @@
+// The josh API is composed of 3 sets of functions:
+// high-level driver functions (ie, build a josh.build file) start with josh_*
+// project-level configuration/build functions
+// utility functions
+
 #ifndef JOSH_BUILD_H
 #define JOSH_BUILD_H
 
@@ -6,7 +11,88 @@
 #include <stdio.h>
 #include <assert.h>
 
+#if __APPLE__
 #define JB_IS_MACOS 1
+#define JB_DEFAULT_VENDOR JB_ENUM(Apple)
+#define JB_DEFAULT_RUNTIME JB_ENUM(Darwin)
+#elif __linux__
+#define JB_IS_LUNIX 1
+#define JB_DEFAULT_VENDOR JB_ENUM(Linux)
+#define JB_DEFAULT_RUNTIME JB_ENUM(GNU)
+#elif defined(WIN32)
+#define JB_IS_WINDOWS 1
+#define JB_DEFAULT_VENDOR JB_ENUM(Windows)
+#define JB_DEFAULT_RUNTIME JB_ENUM(MSVC)
+#endif
+
+#if (__x86_64__) || (_M_AMD64)
+#define JB_DEFAULT_ARCH JB_ENUM(X86_64)
+#elif (__aarch64__) || (_M_ARM64)
+#define JB_DEFAULT_ARCH JB_ENUM(ARM64)
+#endif
+
+// Builds and runs a josh.build
+// josh_build_src should be a string containing the contents of josh_build.h.
+// When more compilers support embed, we will no longer need the user to provide this
+void josh_build(const char *josh_build_src, const char *path);
+
+#define JB_ENUM(x) JBEnum_ ## x
+
+enum JBArch {
+    JB_ENUM(INVALID_ARCH),
+    JB_ENUM(X86_64),
+    JB_ENUM(ARM64),
+};
+
+enum JBVendor {
+    JB_ENUM(INVALID_VENDOR),
+    JB_ENUM(Apple),
+    JB_ENUM(Linux),
+    JB_ENUM(Windows),
+};
+
+enum JBRuntime {
+    JB_ENUM(INVALID_RUNTIME),
+    JB_ENUM(Darwin),
+    JB_ENUM(GNU),
+    JB_ENUM(MSVC),
+};
+
+typedef struct {
+    enum JBArch arch;
+    enum JBVendor vendor;
+    enum JBRuntime runtime;
+} JBTriple;
+
+typedef struct {
+    JBTriple triple;
+
+    char *lib_dir;
+
+    char *cc;
+    char *cxx;
+    char *ld;
+
+    char *sysroot;
+} JBToolchain;
+
+void jb_set_toolchain_directory(const char *path);
+JBToolchain *jb_native_toolchain();
+JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRuntime runtime);
+JBToolchain *jb_find_toolchain_by_triple(const char *triple);
+
+typedef struct {
+    const char *name;
+    const char **sources;
+
+    const char *build_folder;
+
+    const char **cflags;
+
+    JBToolchain *toolchain;
+} JBExecutable;
+
+void jb_build(JBExecutable *exec);
 
 void jb_run_string(const char *cmd, char *extra[], const char *file, int line);
 void jb_run(char *argv[], const char *file, int line);
@@ -18,22 +104,11 @@ void jb_run(char *argv[], const char *file, int line);
 #define _JB_RUN(cmd, ...) jb_run_string(#cmd, JB_CMD_ARRAY(__VA_ARGS__), __FILE__, __LINE__)
 #define JB_RUN(cmd, ...) _JB_RUN(cmd __VA_OPT__(,) __VA_ARGS__)
 
-typedef struct {
-    const char *name;
-    const char **sources;
-
-    const char *build_folder;
-
-    const char **cflags;
-} JBExecutable;
-
 char *jb_concat(const char *lhs, const char *rhs);
 char *jb_copy_string(const char *str);
 char *jb_format_string(const char *fmt, ...);
 
 const char *jb_filename(const char *path);
-
-void jb_build(JBExecutable *exec);
 
 int jb_file_exists(const char *path);
 
@@ -130,14 +205,73 @@ static inline void jb_vector_push(JBVectorGeneric *vec, void *src, int tsize) {
     }
 
 
+#define JB_FAIL(msg, ...) do { printf(msg "\n" __VA_OPT__(,) __VA_ARGS__); exit(1); } while(0)
+
 #ifdef JOSH_BUILD_IMPL
 
+#include <string.h>
 #include <stdarg.h>
 
 #include <unistd.h>
 
 #include <sys/wait.h>
 #include <sys/param.h>
+
+char *_jb_read_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+
+    if (!f)
+        return NULL;
+
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char *out = malloc(len + 1);
+
+    size_t read = fread(out, 1, len, f);
+
+    if (read != len)
+        return NULL;
+
+    out[len] = 0;
+
+    return out;
+}
+
+void josh_build(const char *josh_build_src, const char *path) {
+    char *build_source = _jb_read_file(path);
+
+    if (!build_source) {
+        printf("Could not read %s\n", path);
+        exit(1);
+        return;
+    }
+
+    char *josh_builder_file = jb_format_string("%s.c", path);
+
+    FILE *out = fopen(josh_builder_file, "wb");
+    const char *preamble = "#define JOSH_BUILD_IMPL\n#line 1 \"josh_build.h\"\n";
+    fwrite(preamble, 1, strlen(preamble), out);
+    fwrite(josh_build_src, 1, strlen(josh_build_src), out);
+    fputc('\n', out);
+    fputs("#line 1 \"josh.build.c\"\n", out);
+    fwrite(build_source, 1, strlen(build_source), out);
+    fclose(out);
+
+    JBExecutable josh = {"josh_builder"};
+    josh.sources = (const char *[]){josh_builder_file, NULL};
+    josh.cflags = (const char *[]){"-Wno-unknown-escape-sequence", NULL};
+    josh.build_folder = "build";
+    jb_build(&josh);
+
+    JB_RUN_CMD("./build/josh_builder");
+
+    remove(josh_builder_file);
+    remove("./build/josh_builder");
+
+    free(josh_builder_file);
+}
 
 void jb_run(char *argv[], const char *file, int line) {
 
@@ -313,6 +447,12 @@ void jb_build(JBExecutable *exec) {
 
     char *object_folder = jb_concat(exec->build_folder, "/object/");
 
+    JBToolchain *tc = exec->toolchain ? exec->toolchain : jb_native_toolchain();
+
+    if (!tc->cc) {
+        JB_FAIL("Toolchain missing C compiler");
+    }
+
     JB_RUN_CMD("mkdir", "-p", exec->build_folder);
     JB_RUN_CMD("mkdir", "-p", object_folder);
 
@@ -327,7 +467,7 @@ void jb_build(JBExecutable *exec) {
 
         JBVector(char *) cmd = {0};
 
-        JBVectorPush(&cmd, "cc");
+        JBVectorPush(&cmd, tc->cc);
 
         for (int i = 0; exec->cflags && exec->cflags[i]; i++) {
         	JBVectorPush(&cmd, (char *)exec->cflags[i]);
@@ -349,7 +489,7 @@ void jb_build(JBExecutable *exec) {
     {
         JBVector(char *) cmd = {0};
 
-        JBVectorPush(&cmd, "ld");
+        JBVectorPush(&cmd, tc->cc);
         JBVectorPush(&cmd, "-o");
         JBVectorPush(&cmd, jb_concat(exec->build_folder, jb_concat("/", exec->name))); // Leak
 
@@ -357,11 +497,20 @@ void jb_build(JBExecutable *exec) {
             JBVectorPush(&cmd, *it);
         }
 
-        JBVectorPush(&cmd, "-syslibroot");
-        JBVectorPush(&cmd, "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk");
+        // if (tc->sysroot) {
+        //     // TODO check if Apple LD or GNU LD
+        //     JBVectorPush(&cmd, "-syslibroot");
+        //     JBVectorPush(&cmd, tc->sysroot);
+        // }
 
-        JBVectorPush(&cmd, "-L/usr/local/lib");
-        JBVectorPush(&cmd, "-lSystem");
+        // JBVectorPush(&cmd, "-L/usr/local/lib");
+
+        // if (tc->triple.runtime == JB_ENUM(Darwin)) {
+        //     JBVectorPush(&cmd, "-lSystem");
+        // }
+        // else if (tc->triple.runtime == JB_ENUM(GNU)) {
+        //     JBVectorPush(&cmd, "-lc");
+        // }
 
         JBVectorPush(&cmd, NULL);
         jb_run(cmd.data, __FILE__, __LINE__);
@@ -386,6 +535,174 @@ char *jb_getcwd() {
         return jb_copy_string(result);
 
     return NULL;
+}
+
+const char *_jb_toolchain_dir = "toolchains";
+
+void jb_set_toolchain_directory(const char *path) {
+    _jb_toolchain_dir = path;
+}
+
+const char *_jb_arch_string(enum JBArch arch) {
+    switch (arch) {
+    case JB_ENUM(INVALID_ARCH):
+        return NULL;
+    case JB_ENUM(X86_64):
+        return "x86_64";
+    case JB_ENUM(ARM64):
+        return "arm64";
+    }
+}
+
+enum JBArch _jb_arch(const char *str) {
+    if (strcmp(str, "x86_64") == 0)
+        return JB_ENUM(X86_64);
+    if (strcmp(str, "arm64") == 0)
+        return JB_ENUM(ARM64);
+    if (strcmp(str, "aarch64") == 0)
+        return JB_ENUM(ARM64);
+
+    return JB_ENUM(INVALID_ARCH);
+}
+
+const char *_jb_vendor_string(enum JBVendor vendor) {
+    switch (vendor) {
+    case JB_ENUM(INVALID_VENDOR):
+        return NULL;
+    case JB_ENUM(Apple):
+        return "apple";
+    case JB_ENUM(Linux):
+        return "linux";
+    case JB_ENUM(Windows):
+        return "windows";
+    }
+}
+
+enum JBVendor _jb_vendor(const char *str) {
+    if (strcmp(str, "apple") == 0)
+        return JB_ENUM(Apple);
+    if (strcmp(str, "linux") == 0)
+        return JB_ENUM(Linux);
+    if (strcmp(str, "windows") == 0)
+        return JB_ENUM(Windows);
+
+    return JB_ENUM(INVALID_VENDOR);
+}
+
+const char *_jb_runtime_string(enum JBRuntime runtime) {
+    switch (runtime) {
+    case JB_ENUM(INVALID_RUNTIME):
+        return NULL;
+    case JB_ENUM(Darwin):
+        return "darwin";
+    case JB_ENUM(Linux):
+        return "gnu";
+    case JB_ENUM(Windows):
+        return "msvc";
+    }
+}
+
+enum JBRuntime _jb_runtime(const char *str) {
+    if (strcmp(str, "darwin") == 0)
+        return JB_ENUM(Darwin);
+    if (strcmp(str, "gnu") == 0)
+        return JB_ENUM(GNU);
+    if (strcmp(str, "msvc") == 0)
+        return JB_ENUM(MSVC);
+
+    return JB_ENUM(INVALID_RUNTIME);
+}
+
+
+char *_jb_check_for_tool(const char *triplet, const char *tool) {
+    char *toolchain_dir = jb_format_string("%s/%s", _jb_toolchain_dir, triplet);
+    if (!jb_file_exists(toolchain_dir)) {
+        JB_FAIL("Could not find a toolchain for %s in %s", triplet, _jb_toolchain_dir);
+    }
+
+    char *tool_path = jb_format_string("%s/bin/%s", toolchain_dir, tool);
+
+    if (!jb_file_exists(tool_path)) {
+        free(tool_path);
+
+        tool_path = jb_format_string("%s/bin/%s-%s", _jb_toolchain_dir, triplet, tool);
+    }
+
+    free(toolchain_dir);
+
+    if (!jb_file_exists(tool_path)) {
+        free(tool_path);
+
+        return NULL;
+    }
+
+    return tool_path;
+}
+
+JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRuntime runtime) {
+    const char *_arch = _jb_arch_string(arch);
+    const char *_vendor = _jb_vendor_string(vendor);
+    const char *_runtime = _jb_runtime_string(runtime);
+
+    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
+
+    char *toolchain_dir = jb_format_string("%s/%s", _jb_toolchain_dir, triplet);
+    if (!jb_file_exists(toolchain_dir)) {
+        JB_FAIL("Could not find a toolchain for %s in %s", triplet, _jb_toolchain_dir);
+    }
+
+    JBToolchain *tc = malloc(sizeof(JBToolchain));
+    memset(tc, 0, sizeof(JBToolchain));
+
+    tc->triple.arch = arch;
+    tc->triple.vendor = vendor;
+    tc->triple.runtime = runtime;
+
+    tc->cc = _jb_check_for_tool(triplet, "gcc");
+    tc->cxx = _jb_check_for_tool(triplet, "g++");
+    tc->ld = _jb_check_for_tool(triplet, "ld");
+    return tc;
+}
+
+JBToolchain *jb_find_toolchain_by_triple(const char *triple) {
+    char *arch = jb_format_string("%.*s", strchr(triple, '-') - triple, triple);
+    char *vendor = jb_format_string("%.*s", strrchr(triple, '-') - (triple + strlen(arch) + 1), triple + strlen(arch) + 1);
+    char *runtime = jb_format_string("%.*s", strlen(triple) - (strlen(arch) + strlen(vendor) + 2), triple + strlen(arch) + strlen(vendor) + 2);
+
+    enum JBArch _arch = _jb_arch(arch);
+    enum JBVendor _vendor = _jb_vendor(vendor);
+    enum JBRuntime _runtime = _jb_runtime(runtime);
+
+    if (_arch == JB_ENUM(INVALID_ARCH)) 
+        JB_FAIL("Unsupported architecture %s", arch);
+
+    if (_vendor == JB_ENUM(INVALID_VENDOR))
+        JB_FAIL("Unsupported vendor '%s'", vendor);
+
+    if (_runtime == JB_ENUM(INVALID_RUNTIME))
+        JB_FAIL("Unsupported runtime %s", runtime);
+
+    return jb_find_toolchain(_arch, _vendor, _runtime);
+}
+
+static JBToolchain __jb_native_toolchain;
+
+JBToolchain *jb_native_toolchain() {
+    JBToolchain tc = {0};
+    tc.triple.arch = JB_DEFAULT_ARCH;
+    tc.triple.vendor = JB_DEFAULT_VENDOR;
+    tc.triple.runtime = JB_DEFAULT_RUNTIME;
+
+    tc.cc = "gcc";
+    tc.cxx = "g++";
+    tc.ld = "ld";
+
+#if JB_IS_MACOS
+    tc.sysroot = "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk";
+#endif
+
+    __jb_native_toolchain = tc;
+    return &__jb_native_toolchain;
 }
 
 #endif // JOSH_BUILD_IMPL
