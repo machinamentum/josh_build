@@ -1,6 +1,12 @@
 set -e
-cc -Wall -pedantic -Wno-format-security -Wno-fixed-enum-extension -std=c2x -Isrc -g -o embed src/embed.c
+rm -rf build
+mkdir -p build
+cc -Wall -Isrc -g -o embed src/embed.c
 ./embed src/josh_build.h src/josh_build_embed.h
+./embed src/init_josh_build.c src/init_josh_build_embed.h
+./embed src/init_src_main.c src/init_src_main_embed.h
 rm embed
-cc -Wall -pedantic -Wno-format-security -Wno-fixed-enum-extension -std=c2x -Isrc -g -o josh src/main.c
+cc -Wall -Isrc -g -o build/josh src/main.c
 rm src/josh_build_embed.h
+rm src/init_josh_build_embed.h
+rm src/init_src_main_embed.h

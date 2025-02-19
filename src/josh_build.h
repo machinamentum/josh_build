@@ -1,14 +1,43 @@
 #ifndef JOSH_BUILD_H
 #define JOSH_BUILD_H
 
-#include <unistd.h>
-#include <sys/wait.h>
-
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
 
+#define JB_IS_MACOS 1
+
+void jb_run_string(const char *cmd, char *extra[], const char *file, int line);
+void jb_run(char *argv[], const char *file, int line);
+
+#define JB_CMD_ARRAY(...) (char **)(const char *const []){__VA_ARGS__ __VA_OPT__(,) NULL, }
+
+#define JB_RUN_CMD(...) jb_run(JB_CMD_ARRAY(__VA_ARGS__), __FILE__, __LINE__)
+
+#define _JB_RUN(cmd, ...) jb_run_string(#cmd, JB_CMD_ARRAY(__VA_ARGS__), __FILE__, __LINE__)
+#define JB_RUN(cmd, ...) _JB_RUN(cmd __VA_OPT__(,) __VA_ARGS__)
+
+typedef struct {
+    const char *name;
+    const char **sources;
+
+    const char *build_folder;
+
+    const char **cflags;
+} JBExecutable;
+
+char *jb_concat(const char *lhs, const char *rhs);
+char *jb_copy_string(const char *str);
+char *jb_format_string(const char *fmt, ...);
+
+const char *jb_filename(const char *path);
+
+void jb_build(JBExecutable *exec);
+
+int jb_file_exists(const char *path);
+
+char *jb_getcwd();
 
 typedef struct {
     void *data;
@@ -101,27 +130,16 @@ static inline void jb_vector_push(JBVectorGeneric *vec, void *src, int tsize) {
     }
 
 
-void jb_run(char *argv[]);
-
-#define JB_RUN_CMD(...) jb_run((char **)(const char *const []){__VA_ARGS__, NULL, })
-
-typedef struct {
-    const char *name;
-    const char **sources;
-
-
-    const char *build_folder;
-} JBExecutable;
-
-char *jb_concat(const char *lhs, const char *rhs);
-
-const char *jb_filename(const char *path);
-
-void jb_build(JBExecutable *exec);
-
 #ifdef JOSH_BUILD_IMPL
 
-void jb_run(char *argv[]) {
+#include <stdarg.h>
+
+#include <unistd.h>
+
+#include <sys/wait.h>
+#include <sys/param.h>
+
+void jb_run(char *argv[], const char *file, int line) {
 
 	for (int i = 0; argv[i]; i++) {
 		printf("%s ", argv[i]);
@@ -145,13 +163,72 @@ void jb_run(char *argv[]) {
             }
 
         } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
+
+        if (WIFSIGNALED(wstatus)) {
+            printf("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
+            exit(1);
+        }
+
+        if (WEXITSTATUS(wstatus) != 0) {
+            printf("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
+            exit(1);
+        }
     }
     else {
         // child
         execvp(argv[0], argv);
         printf("Could not run %s\n", argv[0]);
-        exit(-1);
+        exit(1);
     }
+}
+
+int jb_iswhitespace(int c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v';
+}
+
+void jb_run_string(const char *cmd, char *extra[], const char *file, int line) {
+    JBVector(char *) args = {0};
+
+    const char *start = cmd;
+
+    while (*start && jb_iswhitespace(*start))
+        start += 1;
+
+    const char *end = start;
+
+    while (*start) {
+        end += 1;
+
+        if ((jb_iswhitespace(*end) || *end == 0) && start != end) {
+            size_t len = end-start;
+            char *out = malloc(len+1);
+
+            memcpy(out, start, len);
+            out[len] = 0;
+
+            JBVectorPush(&args, out);
+
+            while (*end && jb_iswhitespace(*end))
+                end += 1;
+
+            start = end;
+        }
+    }
+
+    size_t allocated_end = args.count;
+
+    for (int i = 0; extra && extra[i]; i++) {
+        JBVectorPush(&args, extra[i]);
+    }
+
+    JBVectorPush(&args, NULL);
+    jb_run(args.data, file, line);
+
+    for (size_t i = 0; i < allocated_end; i++) {
+        free(args.data[i]);
+    }
+
+    free(args.data);
 }
 
 char *jb_concat(const char *lhs, const char *rhs) {
@@ -163,6 +240,58 @@ char *jb_concat(const char *lhs, const char *rhs) {
     memcpy(out+l, rhs, r);
     out[l+r] = 0;
     return out;
+}
+
+char *jb_copy_string(const char *str) {
+    size_t l = strlen(str);
+
+    char *out = malloc(l+1);
+    memcpy(out, str, l+1);
+    return out;
+}
+
+char *jb_format_string(const char *fmt, ...) {
+    size_t size = 4096;
+
+    char *buf = malloc(size);
+
+    int result;
+
+    {
+        va_list args;
+        va_start(args, fmt);
+
+        result = vsnprintf(buf, size, fmt, args);
+
+        va_end(args);
+    }
+
+    if (result < 0) {
+        free(buf);
+        return NULL;
+    }
+
+    if (result < size)
+        return buf;
+
+    size = result+1;
+    buf = realloc(buf, size);
+
+    {
+        va_list args;
+        va_start(args, fmt);
+
+        result = vsnprintf(buf, size, fmt, args);
+
+        va_end(args);
+    }
+
+    if (result < 0) {
+        free(buf);
+        return NULL;
+    }
+
+    return buf;
 }
 
 const char *jb_filename(const char *path) {
@@ -187,7 +316,7 @@ void jb_build(JBExecutable *exec) {
     JB_RUN_CMD("mkdir", "-p", exec->build_folder);
     JB_RUN_CMD("mkdir", "-p", object_folder);
 
-    JBVector(char *) object_files = {};
+    JBVector(char *) object_files = {0};
 
     for (int i = 0; exec->sources[i]; i++) {
         const char *filename = jb_filename(exec->sources[i]);
@@ -196,13 +325,29 @@ void jb_build(JBExecutable *exec) {
 
         object[len-1] = 'o'; // .c -> .o
 
-        JB_RUN_CMD("cc", "-o", object, "-c", exec->sources[i]);
+        JBVector(char *) cmd = {0};
+
+        JBVectorPush(&cmd, "cc");
+
+        for (int i = 0; exec->cflags && exec->cflags[i]; i++) {
+        	JBVectorPush(&cmd, (char *)exec->cflags[i]);
+        }
+
+        JBVectorPush(&cmd, "-o");
+        JBVectorPush(&cmd, object);
+        JBVectorPush(&cmd, "-c");
+        JBVectorPush(&cmd, (char *)exec->sources[i]);
+
+        JBVectorPush(&cmd, NULL);
+        jb_run(cmd.data, __FILE__, __LINE__);
+
+        free(cmd.data);
 
         JBVectorPush(&object_files, object);
     }
 
     {
-        JBVector(char *) cmd = {};
+        JBVector(char *) cmd = {0};
 
         JBVectorPush(&cmd, "ld");
         JBVectorPush(&cmd, "-o");
@@ -218,7 +363,8 @@ void jb_build(JBExecutable *exec) {
         JBVectorPush(&cmd, "-L/usr/local/lib");
         JBVectorPush(&cmd, "-lSystem");
 
-        jb_run(cmd.data);
+        JBVectorPush(&cmd, NULL);
+        jb_run(cmd.data, __FILE__, __LINE__);
     }
 
     JBArrayForEach(&object_files) {
@@ -226,6 +372,20 @@ void jb_build(JBExecutable *exec) {
     }
     free(object_files.data);
     free(object_folder);
+}
+
+int jb_file_exists(const char *path) {
+    return access(path, F_OK) == 0;
+}
+
+char *jb_getcwd() {
+    char buf[MAXPATHLEN+1];
+    char *result = getcwd(buf, MAXPATHLEN+1);
+
+    if (result)
+        return jb_copy_string(result);
+
+    return NULL;
 }
 
 #endif // JOSH_BUILD_IMPL
