@@ -1,3 +1,12 @@
+/*
+ * ----------------------------------------------------------------------------
+ * "THE BEER-WARE LICENSE" (Revision 42):
+ * <josh> wrote this file.  As long as you retain this notice you
+ * can do whatever you want with this stuff. If we meet some day, and you think
+ * this stuff is worth it, you can buy me a beer in return.   Josh Huelsman
+ * ----------------------------------------------------------------------------
+ */
+
 // The josh API is composed of 3 sets of functions:
 // high-level driver functions (ie, build a josh.build file) start with josh_*
 // project-level configuration/build functions
