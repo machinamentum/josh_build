@@ -1,0 +1,15 @@
+name: Build
+run-name: ${{ gitea.actor }} building josh_build
+on: [push]
+
+jobs:
+  build:
+    runs-on: linux_arm64
+    steps:
+
+      - name: Check out repository code
+        uses: actions/checkout@v4
+      - name: build bootrap
+        run: bash bootstrap.sh
+      - name: run josh build
+        run: ./build/josh build
