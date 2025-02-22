@@ -22,20 +22,23 @@ int main() {
         jb_build(&josh);
     }
 
-    {
-        // Cross build linux executable
-        JBExecutable josh = {"josh_linux"};
-        josh.sources = (const char *[]){"src/main.c", NULL};
-        josh.build_folder = "build";
-
-        JBToolchain *toolchain = jb_find_toolchain(JB_ENUM(ARM64), JB_ENUM(Linux), JB_ENUM(GNU));
+    JBToolchain *toolchain = jb_find_toolchain(JB_ENUM(ARM64), JB_ENUM(Linux), JB_ENUM(GNU));
+    if (toolchain != jb_native_toolchain()) {
         if(!toolchain) {
             printf("WARNING: no toolchain for arm64-linux-gnu; skipping build...\n");
         }
         else {
+            // Cross build linux executable
+            JBExecutable josh = {"josh_linux"};
+            josh.sources = (const char *[]){"src/main.c", NULL};
+            josh.build_folder = "build";
+
             josh.toolchain = toolchain;
             jb_build(&josh);
         }
+    }
+    else {
+        printf("Host is running arm64-linux-gnu; skipping cross-build...\n");
     }
 
     remove("src/josh_build_embed.h");

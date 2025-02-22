@@ -640,6 +640,10 @@ char *_jb_check_for_tool(const char *triplet, const char *tool) {
 }
 
 JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRuntime runtime) {
+
+    if (arch == JB_DEFAULT_ARCH && vendor == JB_DEFAULT_VENDOR && runtime == JB_DEFAULT_RUNTIME)
+        return jb_native_toolchain();
+
     const char *_arch = _jb_arch_string(arch);
     const char *_vendor = _jb_vendor_string(vendor);
     const char *_runtime = _jb_runtime_string(runtime);
