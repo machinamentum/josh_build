@@ -9,7 +9,7 @@ jobs:
 
       - name: Check out repository code
         uses: actions/checkout@v4
-      - name: build bootrap
+      - name: build bootstrap
         run: bash bootstrap.sh
       - name: run josh build
         run: ./build/josh build
