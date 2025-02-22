@@ -4,9 +4,8 @@ on: [push]
 
 jobs:
   build:
-    runs-on: linux_arm64
+    runs-on: linux
     steps:
-
       - name: Check out repository code
         uses: actions/checkout@v4
       - name: build bootstrap
