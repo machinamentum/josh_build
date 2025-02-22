@@ -30,11 +30,12 @@ int main() {
 
         JBToolchain *toolchain = jb_find_toolchain(JB_ENUM(ARM64), JB_ENUM(Linux), JB_ENUM(GNU));
         if(!toolchain) {
-            JB_FAIL("Missing toolchain for arm64-linux-gnu");
+            printf("WARNING: no toolchain for arm64-linux-gnu; skipping build...\n");
         }
-        josh.toolchain = toolchain;
-
-        jb_build(&josh);
+        else {
+            josh.toolchain = toolchain;
+            jb_build(&josh);
+        }
     }
 
     remove("src/josh_build_embed.h");

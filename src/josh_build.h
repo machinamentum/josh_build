@@ -648,7 +648,7 @@ JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRu
 
     char *toolchain_dir = jb_format_string("%s/%s", _jb_toolchain_dir, triplet);
     if (!jb_file_exists(toolchain_dir)) {
-        JB_FAIL("Could not find a toolchain for %s in %s", triplet, _jb_toolchain_dir);
+        return NULL;
     }
 
     JBToolchain *tc = malloc(sizeof(JBToolchain));
