@@ -216,6 +216,8 @@ static inline void jb_vector_push(JBVectorGeneric *vec, void *src, int tsize) {
 
 #define JB_FAIL(msg, ...) do { printf(msg "\n" __VA_OPT__(,) __VA_ARGS__); exit(1); } while(0)
 
+#define JB_ASSERT(cond, msg, ...) if (!(cond)) JB_FAIL(msg, __VA_ARGS__);
+
 #ifdef JOSH_BUILD_IMPL
 
 #include <string.h>

@@ -24,10 +24,10 @@ char *read_file(const char *path) {
 	return out;
 }
 
-int main(int argc, char **argv) {
-	char *text = read_file(argv[1]);
+void generate_embed(const char *input, const char *output) {
+	char *text = read_file(input);
 
-	FILE *out = fopen(argv[2], "wb");
+	FILE *out = fopen(output, "wb");
 
 	while (*text) {
 		fprintf(out, "0x%X", *text);
@@ -40,6 +40,14 @@ int main(int argc, char **argv) {
 	fputc('\n', out);
 
 	fclose(out);
+}
 
+int main(int argc, char **argv) {
+	if (argc < 3) {
+		printf("Usage: embed <input> <output>");
+		return 1;
+	}
+
+	generate_embed(argv[1], argv[2]);
 	return 0;
 }

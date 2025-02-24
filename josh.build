@@ -1,18 +1,52 @@
 
+char *read_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+
+    if (!f)
+        return NULL;
+
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char *out = malloc(len + 1);
+
+    size_t read = fread(out, 1, len, f);
+
+    if (read != len)
+        return NULL;
+
+    out[len] = 0;
+
+    return out;
+}
+
+// TODO should embed generation be part of the josh_build.h library?
+void generate_embed(const char *input, const char *output) {
+    char *text = read_file(input);
+
+    JB_ASSERT(text, "could not read file: %s", input);
+
+    FILE *out = fopen(output, "wb");
+
+    while (*text) {
+        fprintf(out, "0x%X", *text);
+        text++;
+
+        if (*text != 0)
+            fprintf(out, ", ");
+    }
+
+    fputc('\n', out);
+
+    fclose(out);
+}
 
 int main() {
     {
-        JBExecutable josh = {"embed"};
-        josh.sources = (const char *[]){"src/embed.c", NULL};
-        josh.build_folder = "build";
-        josh.cflags = (const char *[]){ "-Wall", NULL };
-        jb_build(&josh);
-
-        JB_RUN_CMD("./build/embed", "src/josh_build.h", "src/josh_build_embed.h");
-        JB_RUN_CMD("./build/embed", "src/init_josh_build.c", "src/init_josh_build_embed.h");
-        JB_RUN_CMD("./build/embed", "src/init_src_main.c", "src/init_src_main_embed.h");
-
-        remove("./build/embed");
+        generate_embed("src/josh_build.h", "src/josh_build_embed.h");
+        generate_embed("src/init_josh_build.c", "src/init_josh_build_embed.h");
+        generate_embed("src/init_src_main.c", "src/init_src_main_embed.h");
     }
 
     {
