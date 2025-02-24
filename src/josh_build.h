@@ -121,6 +121,9 @@ const char *jb_filename(const char *path);
 
 int jb_file_exists(const char *path);
 
+// Generates #embed-style text in output_file based on the contents of input_file
+void jb_generate_embed(const char *input_file, const char *output_file);
+
 char *jb_getcwd();
 
 typedef struct {
@@ -228,7 +231,7 @@ static inline void jb_vector_push(JBVectorGeneric *vec, void *src, int tsize) {
 #include <sys/wait.h>
 #include <sys/param.h>
 
-char *_jb_read_file(const char *path) {
+char *_jb_read_file(const char *path, size_t *out_len) {
     FILE *f = fopen(path, "rb");
 
     if (!f)
@@ -247,17 +250,16 @@ char *_jb_read_file(const char *path) {
 
     out[len] = 0;
 
+    if (out_len)
+        *out_len = len;
+
     return out;
 }
 
 void josh_build(const char *josh_build_src, const char *path) {
-    char *build_source = _jb_read_file(path);
+    char *build_source = _jb_read_file(path, NULL);
 
-    if (!build_source) {
-        printf("Could not read %s\n", path);
-        exit(1);
-        return;
-    }
+    JB_ASSERT(build_source, "could not read file: %s", path);
 
     char *josh_builder_file = jb_format_string("%s.c", path);
 
@@ -718,6 +720,28 @@ JBToolchain *jb_native_toolchain() {
 
     __jb_native_toolchain = tc;
     return &__jb_native_toolchain;
+}
+
+void jb_generate_embed(const char *input, const char *output) {
+    size_t len = 0;
+    char *text = _jb_read_file(input, &len);
+
+    JB_ASSERT(text, "could not read file: %s", input);
+
+    FILE *out = fopen(output, "wb");
+
+    JB_ASSERT(out, "could not open file for writing: %s", output);
+
+    for (size_t i = 0; i < len; i++) {
+        fprintf(out, "0x%X", text[i]);
+
+        if (i < (len-1))
+            fprintf(out, ", ");
+    }
+
+    fputc('\n', out);
+
+    fclose(out);
 }
 
 #endif // JOSH_BUILD_IMPL
