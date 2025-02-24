@@ -5,11 +5,13 @@
 void usage() {
     printf("Usage: josh [option]\n");
     printf("    build   : build josh.build file\n");
+    printf("    cc      : invoke C compiler; use -target <triple> to use cross compiler\n");
+    printf("    init    : generate project template in current working directory\n");
     printf("    library : dump josh build header library\n");
     printf("\n");
 }
 
-const char josh_build_src[] = {
+const char _jb_josh_build_src[] = {
 #include "josh_build_embed.h"
     , 0
 };
@@ -49,7 +51,7 @@ int main(int argc, char *argv[]) {
             exit(1);
         }
 
-        josh_build(josh_build_src, "josh.build");
+        josh_build("josh.build");
         
         return 0;
     }
@@ -74,22 +76,35 @@ int main(int argc, char *argv[]) {
     }
 
     if (strcmp(argv[1], "library") == 0) {
-        puts(josh_build_src);
+        puts(_jb_josh_build_src);
+        puts("const char _jb_josh_build_src[] = {\n");
+
+        const char *text = _jb_josh_build_src;
+        while (*text) {
+            printf("0x%X", *text);
+
+            text += 1;
+            if (*text)
+                printf(", ");
+        }
+        puts("\n    , 0\n");
+
+        puts("};\n");
         return 0;
     }
 
     if (strcmp(argv[1], "cc") == 0) {
         JBToolchain *tc = jb_native_toolchain();
-        const char *target_opt = "--target=";
-        size_t target_opt_len = strlen(target_opt);
-        for (int i = 2; i < argc; i++) {
-            if (strncmp(argv[i], target_opt, target_opt_len) == 0) {
-                char *triple = jb_format_string("%.*s", strlen(argv[i]) - target_opt_len, argv[i] + target_opt_len);
+        const char *target_opt = "-target";
+        for (int i = 2; i < (argc - 1); i++) {
+            if (strcmp(argv[i], target_opt) == 0) {
+                char *triple = argv[i+1];
                 tc = jb_find_toolchain_by_triple(triple);
 
                 if (!tc) {
                     JB_FAIL("Could not find toolchain for %s", triple);
                 }
+                i += 1;
             }
         }
 
@@ -100,14 +115,9 @@ int main(int argc, char *argv[]) {
 
         JBVectorPush(&cmd, tc->cc);
 
-        // TODO check if clang is our compiler and append --target=
+        // TODO check if gcc is our compiler and filter out -target <triple>
         for (int i = 2; i < argc; i++) {
-            if (strncmp(argv[i], target_opt, target_opt_len) == 0) {
-
-            }
-            else {
-                JBVectorPush(&cmd, argv[i]);
-            }
+            JBVectorPush(&cmd, argv[i]);
         }
 
         jb_run(cmd.data, __FILE__, __LINE__);

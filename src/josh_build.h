@@ -41,9 +41,7 @@
 #endif
 
 // Builds and runs a josh.build
-// josh_build_src should be a string containing the contents of josh_build.h.
-// When more compilers support embed, we will no longer need the user to provide this
-void josh_build(const char *josh_build_src, const char *path);
+void josh_build(const char *path);
 
 #define JB_ENUM(x) JBEnum_ ## x
 
@@ -256,7 +254,9 @@ char *_jb_read_file(const char *path, size_t *out_len) {
     return out;
 }
 
-void josh_build(const char *josh_build_src, const char *path) {
+extern const char _jb_josh_build_src[];
+
+void josh_build(const char *path) {
     char *build_source = _jb_read_file(path, NULL);
 
     JB_ASSERT(build_source, "could not read file: %s", path);
@@ -266,8 +266,25 @@ void josh_build(const char *josh_build_src, const char *path) {
     FILE *out = fopen(josh_builder_file, "wb");
     const char *preamble = "#define JOSH_BUILD_IMPL\n#line 1 \"josh_build.h\"\n";
     fwrite(preamble, 1, strlen(preamble), out);
-    fwrite(josh_build_src, 1, strlen(josh_build_src), out);
+    fwrite(_jb_josh_build_src, 1, strlen(_jb_josh_build_src), out);
     fputc('\n', out);
+
+    {
+        fputs("const char _jb_josh_build_src[] = {\n", out);
+
+        const char *text = _jb_josh_build_src;
+        while (*text) {
+            fprintf(out, "0x%X", *text);
+
+            text += 1;
+            if (*text)
+                fprintf(out, ", ");
+        }
+        fputs("\n    , 0\n", out);
+
+        fputs("};\n", out);
+    }
+
     fputs("#line 1 \"josh.build.c\"\n", out);
     fwrite(build_source, 1, strlen(build_source), out);
     fclose(out);
