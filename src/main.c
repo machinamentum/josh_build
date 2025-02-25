@@ -3,8 +3,8 @@
 #include "josh_build.h"
 
 void usage() {
-    printf("Usage: josh [option]\n");
-    printf("    build   : build josh.build file\n");
+    printf("Usage: josh [tool] <args>\n");
+    printf("    build   : build josh.build file; specify file path to josh build file, otherwise looks for josh.build in current directory\n");
     printf("    cc      : invoke C compiler; use -target <triple> to use cross compiler\n");
     printf("    init    : generate project template in current working directory\n");
     printf("    library : dump josh build header library\n");
@@ -45,13 +45,16 @@ int main(int argc, char *argv[]) {
 
     if (strcmp(argv[1], "build") == 0) {
 
-        // Look for josh.build in current directory
-        if (!jb_file_exists("josh.build")) {
-            printf("josh.build file not found\n");
-            exit(1);
+        const char *name = "josh.build";
+
+        if (argc > 2)
+            name = argv[2];
+
+        if (!jb_file_exists(name)) {
+            JB_FAIL("file not found: %s", name);
         }
 
-        josh_build("josh.build");
+        josh_build(name);
         
         return 0;
     }
