@@ -20,15 +20,22 @@
 #include <stdio.h>
 #include <assert.h>
 
+#define JB_IS_MACOS   0
+#define JB_IS_LUNIX   0
+#define JB_IS_WINDOWS 0
+
 #if __APPLE__
+#undef  JB_IS_MACOS
 #define JB_IS_MACOS 1
 #define JB_DEFAULT_VENDOR JB_ENUM(Apple)
 #define JB_DEFAULT_RUNTIME JB_ENUM(Darwin)
 #elif __linux__
+#undef  JB_IS_LUNIX
 #define JB_IS_LUNIX 1
 #define JB_DEFAULT_VENDOR JB_ENUM(Linux)
 #define JB_DEFAULT_RUNTIME JB_ENUM(GNU)
 #elif defined(WIN32)
+#undef  JB_IS_WINDOWS
 #define JB_IS_WINDOWS 1
 #define JB_DEFAULT_VENDOR JB_ENUM(Windows)
 #define JB_DEFAULT_RUNTIME JB_ENUM(MSVC)
@@ -473,106 +480,6 @@ const char *jb_filename(const char *path) {
     return path;
 }
 
-void jb_build(JBExecutable *exec) {
-
-    char *object_folder = jb_concat(exec->build_folder, "/object/");
-
-    JBToolchain *tc = exec->toolchain ? exec->toolchain : jb_native_toolchain();
-
-    if (!tc->cc) {
-        JB_FAIL("Toolchain missing C compiler");
-    }
-
-    JB_RUN_CMD("mkdir", "-p", exec->build_folder);
-    JB_RUN_CMD("mkdir", "-p", object_folder);
-
-    JBVector(char *) object_files = {0};
-
-    for (int i = 0; exec->sources[i]; i++) {
-        const char *filename = jb_filename(exec->sources[i]);
-        char *object = jb_concat(object_folder, filename);
-        size_t len = strlen(object);
-
-        object[len-1] = 'o'; // .c -> .o
-
-        JBVector(char *) cmd = {0};
-
-        JBVectorPush(&cmd, tc->cc);
-
-        for (int i = 0; exec->cflags && exec->cflags[i]; i++) {
-        	JBVectorPush(&cmd, (char *)exec->cflags[i]);
-        }
-
-        JBVectorPush(&cmd, "-o");
-        JBVectorPush(&cmd, object);
-        JBVectorPush(&cmd, "-c");
-        JBVectorPush(&cmd, (char *)exec->sources[i]);
-
-        JBVectorPush(&cmd, NULL);
-        jb_run(cmd.data, __FILE__, __LINE__);
-
-        free(cmd.data);
-
-        JBVectorPush(&object_files, object);
-    }
-
-    {
-        JBVector(char *) cmd = {0};
-
-        JBVectorPush(&cmd, tc->cc);
-        JBVectorPush(&cmd, "-o");
-        JBVectorPush(&cmd, jb_concat(exec->build_folder, jb_concat("/", exec->name))); // Leak
-
-        JBArrayForEach(&object_files) {
-            JBVectorPush(&cmd, *it);
-        }
-
-        // if (tc->sysroot) {
-        //     // TODO check if Apple LD or GNU LD
-        //     JBVectorPush(&cmd, "-syslibroot");
-        //     JBVectorPush(&cmd, tc->sysroot);
-        // }
-
-        // JBVectorPush(&cmd, "-L/usr/local/lib");
-
-        // if (tc->triple.runtime == JB_ENUM(Darwin)) {
-        //     JBVectorPush(&cmd, "-lSystem");
-        // }
-        // else if (tc->triple.runtime == JB_ENUM(GNU)) {
-        //     JBVectorPush(&cmd, "-lc");
-        // }
-
-        JBVectorPush(&cmd, NULL);
-        jb_run(cmd.data, __FILE__, __LINE__);
-    }
-
-    JBArrayForEach(&object_files) {
-        free(*it);
-    }
-    free(object_files.data);
-    free(object_folder);
-}
-
-int jb_file_exists(const char *path) {
-    return access(path, F_OK) == 0;
-}
-
-char *jb_getcwd() {
-    char buf[MAXPATHLEN+1];
-    char *result = getcwd(buf, MAXPATHLEN+1);
-
-    if (result)
-        return jb_copy_string(result);
-
-    return NULL;
-}
-
-const char *_jb_toolchain_dir = "toolchains";
-
-void jb_set_toolchain_directory(const char *path) {
-    _jb_toolchain_dir = path;
-}
-
 const char *_jb_arch_string(enum JBArch arch) {
     switch (arch) {
     case JB_ENUM(INVALID_ARCH):
@@ -643,30 +550,174 @@ enum JBRuntime _jb_runtime(const char *str) {
     return JB_ENUM(INVALID_RUNTIME);
 }
 
+void jb_build(JBExecutable *exec) {
 
-char *_jb_check_for_tool(const char *triplet, const char *tool) {
-    char *toolchain_dir = jb_format_string("%s/%s", _jb_toolchain_dir, triplet);
-    if (!jb_file_exists(toolchain_dir)) {
-        JB_FAIL("Could not find a toolchain for %s in %s", triplet, _jb_toolchain_dir);
+    char *object_folder = jb_concat(exec->build_folder, "/object/");
+
+    JBToolchain *tc = exec->toolchain ? exec->toolchain : jb_native_toolchain();
+
+    const char *_arch = _jb_arch_string(tc->triple.arch);
+    const char *_vendor = _jb_vendor_string(tc->triple.vendor);
+    const char *_runtime = _jb_runtime_string(tc->triple.runtime);
+
+    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
+
+    if (!tc->cc) {
+        JB_FAIL("Toolchain missing C compiler");
     }
 
-    char *tool_path = jb_format_string("%s/bin/%s", toolchain_dir, tool);
+    JB_RUN_CMD("mkdir", "-p", exec->build_folder);
+    JB_RUN_CMD("mkdir", "-p", object_folder);
 
-    if (!jb_file_exists(tool_path)) {
-        free(tool_path);
+    JBVector(char *) object_files = {0};
 
-        tool_path = jb_format_string("%s/bin/%s-%s", _jb_toolchain_dir, triplet, tool);
+    for (int i = 0; exec->sources[i]; i++) {
+        const char *filename = jb_filename(exec->sources[i]);
+        char *object = jb_concat(object_folder, filename);
+        size_t len = strlen(object);
+
+        object[len-1] = 'o'; // .c -> .o
+
+        JBVector(char *) cmd = {0};
+
+        JBVectorPush(&cmd, tc->cc);
+
+        if (triplet && strstr(tc->cc, "clang") != NULL) {
+            JBVectorPush(&cmd, "-target");
+            JBVectorPush(&cmd, triplet);
+
+            // JBVectorPush(&cmd, "--rtlib=compiler-rt");
+        }
+
+        if (tc->sysroot) {
+            // TODO check if Apple LD or GNU LD
+            // JBVectorPush(&cmd, "-syslibroot");
+            JBVectorPush(&cmd, "--sysroot");
+            JBVectorPush(&cmd, tc->sysroot);
+        }
+
+        for (int i = 0; exec->cflags && exec->cflags[i]; i++) {
+        	JBVectorPush(&cmd, (char *)exec->cflags[i]);
+        }
+
+        JBVectorPush(&cmd, "-o");
+        JBVectorPush(&cmd, object);
+        JBVectorPush(&cmd, "-c");
+        JBVectorPush(&cmd, (char *)exec->sources[i]);
+
+        JBVectorPush(&cmd, NULL);
+        jb_run(cmd.data, __FILE__, __LINE__);
+
+        free(cmd.data);
+
+        JBVectorPush(&object_files, object);
     }
 
-    free(toolchain_dir);
+    {
+        JBVector(char *) cmd = {0};
 
-    if (!jb_file_exists(tool_path)) {
-        free(tool_path);
+        JBVectorPush(&cmd, tc->cc);
 
-        return NULL;
+        if (strstr(tc->cc, "clang") != NULL) {
+            JBVectorPush(&cmd, "-fuse-ld=lld");
+        }
+
+        if (triplet && strstr(tc->cc, "clang") != NULL) {
+            JBVectorPush(&cmd, "-target");
+            JBVectorPush(&cmd, triplet);
+
+            JBVectorPush(&cmd, "--rtlib=compiler-rt");
+        }
+
+        if (tc->sysroot) {
+            // TODO check if Apple LD or GNU LD
+            // JBVectorPush(&cmd, "-syslibroot");
+            JBVectorPush(&cmd, "--sysroot");
+            JBVectorPush(&cmd, tc->sysroot);
+        }
+
+        JBVectorPush(&cmd, "-o");
+        JBVectorPush(&cmd, jb_concat(exec->build_folder, jb_concat("/", exec->name))); // Leak
+
+        JBArrayForEach(&object_files) {
+            JBVectorPush(&cmd, *it);
+        }
+
+        // JBVectorPush(&cmd, "-L/usr/local/lib");
+
+        // if (tc->triple.runtime == JB_ENUM(Darwin)) {
+        //     JBVectorPush(&cmd, "-lSystem");
+        // }
+        // else if (tc->triple.runtime == JB_ENUM(GNU)) {
+        //     JBVectorPush(&cmd, "-lc");
+        // }
+
+        JBVectorPush(&cmd, NULL);
+        jb_run(cmd.data, __FILE__, __LINE__);
     }
 
-    return tool_path;
+    JBArrayForEach(&object_files) {
+        free(*it);
+    }
+    free(object_files.data);
+    free(object_folder);
+}
+
+int jb_file_exists(const char *path) {
+    return access(path, F_OK) == 0;
+}
+
+char *jb_getcwd() {
+    char buf[MAXPATHLEN+1];
+    char *result = getcwd(buf, MAXPATHLEN+1);
+
+    if (result)
+        return jb_copy_string(result);
+
+    return NULL;
+}
+
+const char *_jb_toolchain_dir = "toolchains";
+
+void jb_set_toolchain_directory(const char *path) {
+    _jb_toolchain_dir = path;
+}
+
+char *_jb_check_for_tool(const char *triplet, const char *tool, int is_llvm) {
+    if (is_llvm) {
+        char *tool_path = jb_format_string("%s/bin/%s", _jb_toolchain_dir, tool);
+        if (!jb_file_exists(tool_path)) {
+            free(tool_path);
+            return NULL;
+        }
+
+        return tool_path;
+    }
+    else {
+        char *toolchain_dir = jb_format_string("%s/%s", _jb_toolchain_dir, triplet);
+
+        if (!jb_file_exists(toolchain_dir)) {
+            JB_FAIL("Could not find a toolchain for %s in %s", triplet, _jb_toolchain_dir);
+        }
+
+        char *tool_path = jb_format_string("%s/bin/%s", toolchain_dir, tool);
+
+        if (!jb_file_exists(tool_path)) {
+            free(tool_path);
+
+            tool_path = jb_format_string("%s/bin/%s-%s", _jb_toolchain_dir, triplet, tool);
+        }
+
+        free(toolchain_dir);
+
+        if (!jb_file_exists(tool_path)) {
+            free(tool_path);
+
+            return NULL;
+        }
+
+        return tool_path;
+    }
 }
 
 JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRuntime runtime) {
@@ -692,9 +743,11 @@ JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRu
     tc->triple.vendor = vendor;
     tc->triple.runtime = runtime;
 
-    tc->cc = _jb_check_for_tool(triplet, "gcc");
-    tc->cxx = _jb_check_for_tool(triplet, "g++");
-    tc->ld = _jb_check_for_tool(triplet, "ld");
+    tc->cc = _jb_check_for_tool(triplet, "gcc", 0);
+    tc->cxx = _jb_check_for_tool(triplet, "g++", 0);
+    tc->ld = _jb_check_for_tool(triplet, "ld", 0);
+
+    tc->sysroot = jb_format_string("%s/sys-root", toolchain_dir);
     return tc;
 }
 
