@@ -1,0 +1,423 @@
+// Builds an LLVM toolchain with Linux+glibc sysroot
+
+// Prereqs:
+// compiler curl tar (maybe some toolchain building tools)
+
+// This must be run on a case-sensitive file system in order to build glibc
+// (glibc build system creates conflicting files with the same name, but different cases for the extensios [.os vs .oS])
+
+// Some useful links to reference for the build steps:
+// https://preshing.com/20141119/how-to-build-a-gcc-cross-compiler/
+// https://wiki.gentoo.org/wiki/Embedded_Handbook/General/Creating_a_cross-compiler#Cross-compiler_internals
+
+// The officially sanctioned method to build a cross-compiler can be found in glibc-VERSION/scripts/build-many-glibcs.py
+// The gist of it seems to be:
+// * build isolated static target gcc using newlib and disabling most of gcc's features
+// * build glibc with static gcc
+// * build target gcc again, but without disabling features and using glibc instead of newlib
+
+// #define TARGET_ARCHS "X86;AArch64;ARM;AVR;Mips;WebAssembly"
+#define TARGET_ARCHS X86;AArch64;ARM
+#define LLVM_RUNTIME_TARGETS "aarch64-linux-gnu"
+
+#define GCC_LANGS "c,c++"
+
+#define GCC_VERSION 14.2.0
+#define GMP_VERSION 6.3.0
+#define MPC_VERSION 1.3.1
+#define MPFR_VERSION 4.2.1
+
+#define GLIBC_VERSION 2.41
+#define BINUTILS_VERSION 2.44
+
+#define MAKE_VERSION 4.0
+#define SED_VERSION 4.9 // Needed for Linux headers
+#define TEXINFO_VERSION 7.0
+#define BISON_VERSION 3.8.1
+#define XZ_VERSION 5.7.1alpha
+#define HELP2MAN_VERSION 1.43.3
+#define BASH_VERSION 5.2
+#define LIBTOOL_VERSION 2.5.4
+
+#define LINUX_VERSION 6.13.2
+
+#define COMPRESSION gz
+
+#define GNU_LINK https:/\/mirror.us-midwest-1.nexcess.net/gnu
+
+#define DOWNLOAD_AND_EXTRACT(lib, version) \
+DOWNLOAD_GENERIC(STR(lib-version.tar.COMPRESSION), STR(GNU_LINK/lib/lib-version.tar.COMPRESSION)); \
+if (!jb_file_exists(STR(lib-version))) UNTAR(ARCHIVE(lib-version.tar.COMPRESSION))
+
+#define DOWNLOAD_AND_EXTRACT2(lib, version) \
+DOWNLOAD_GENERIC(STR(lib-version.tar.COMPRESSION), STR(GNU_LINK/lib/lib-version/lib-version.tar.COMPRESSION)); \
+if (!jb_file_exists(STR(lib-version))) UNTAR(ARCHIVE(lib-version.tar.COMPRESSION))
+
+#define DOWNLOAD_AND_EXTRACT_GENERIC(lib, version, link) \
+DOWNLOAD_GENERIC(STR(lib-version.tar.COMPRESSION), STR(link)); \
+if (!jb_file_exists(STR(lib-version))) UNTAR(ARCHIVE(lib-version.tar.COMPRESSION))
+
+#define DOWNLOAD_GENERIC(name, link) \
+if (!jb_file_exists(ARCHIVE_STRING(name))) CURL(link, ARCHIVE_STRING(name))
+
+#define CURL(link, path) JB_RUN_CMD("curl", link, "--output", path)
+#define UNTAR(path) JB_RUN_CMD("tar", "-xf", path)
+
+#define XSTR(x) #x
+#define STR(x) XSTR(x)
+
+#define LIST(...) __VA_ARGS__
+
+#define WORKSPACE PATH(context.root, toolchain-build)
+#define ROOT context.root
+#define TOOLCHAIN(...) PATH(ROOT, toolchains/__VA_ARGS__)
+#define TOOLCHAIN_TARGET(target, tokens) FMT("%s%s/%s", TOOLCHAIN(), target, STR(tokens))
+
+#define NATIVE_TOOLS(tokens) PATH(WORKSPACE, native-tools/tokens)
+#define NATIVE_TOOLS_STRING(string) FMT("%s/native-tools/%s", WORKSPACE, string)
+#define NATIVE_BUILD   PATH(WORKSPACE, native-build)
+
+#define ARCHIVE_STRING(string) FMT("%s/archive/%s", WORKSPACE, string)
+#define ARCHIVE(tokens) PATH(WORKSPACE, archive/tokens)
+
+#define TARGET_BUILD(tokens) PATH(WORKSPACE, target-build/tokens)
+
+#if JB_IS_MACOS
+#define MACOS_SYS_ROOT --with-sysroot=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+#else
+#define MACOS_SYS_ROOT
+#endif
+
+#define mkdir(dir) JB_RUN(mkdir -p, dir)
+#define PATH(var, tokens) jb_concat(var, "/" #tokens)
+
+#define FMT(fmt, ...) jb_format_string(fmt, __VA_ARGS__)
+
+#define SYS_ROOT sys-root
+
+struct {
+    char *root;
+} context;
+
+char *get_package_name(const char *package) {
+    char *name_end = strchr(package, '-');
+
+    char *name = FMT("%.*s", name_end-package, package);
+    return name;
+}
+
+char *get_package_version(const char *package) {
+    char *ver_start = strchr(package, '-') + 1;
+
+    char *version = FMT("%.*s", strlen(package)-(ver_start - package), ver_start);
+    return version;
+}
+
+void download_extract_gnu(const char *name, const char *version) {
+    if (jb_file_exists(FMT("%s-%s", name, version)))
+        return;
+
+    const char *archive_name = FMT("%s-%s.tar.gz", name, version);
+    DOWNLOAD_GENERIC(archive_name, FMT("https://mirror.us-midwest-1.nexcess.net/gnu/%s/%s-%s.tar.gz", name, name, version));
+
+    if (!jb_file_exists(FMT("%s-%s", name, version))) UNTAR(ARCHIVE_STRING(archive_name));
+}
+
+int have_build_tool(const char *name) {
+    return jb_file_exists(NATIVE_TOOLS_STRING(FMT("bin/%s", name)));
+}
+
+void install_gnu_package(const char *package) {
+
+    char *name = get_package_name(package);
+    char *version = get_package_version(package);
+
+    download_extract_gnu(name, version);
+
+    chdir(package);
+
+    JB_RUN(./configure, FMT("--prefix=%s", NATIVE_TOOLS(/)));
+    JB_RUN(make install);
+
+    chdir("..");
+
+}
+
+void install_llvm_toolchain(const char *prefix) {
+    if (!jb_file_exists(ARCHIVE(llvm-project))) {
+        chdir(ARCHIVE(/));
+
+        JB_RUN(git clone --depth 1 --branch llvmorg-19.1.7 https:/\/github.com/llvm/llvm-project.git);
+
+        chdir(WORKSPACE);
+    }
+
+    if (!jb_file_exists(FMT("%s/bin/clang", prefix))) {
+
+        JB_RUN(cmake -B llvm-build -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS=clang;lld 
+            -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_TESTS=OFF 
+            -DLLVM_TARGETS_TO_BUILD=TARGET_ARCHS -DLLVM_INSTALL_TOOLCHAIN_ONLY=ON
+
+            // -DLIBCXXABI_USE_LLVM_UNWINDER=OFF
+
+            // -DLLVM_BUILD_EXTERNAL_COMPILER_RT=ON
+            // -DCOMPILER_RT_DEFAULT_TARGET_TRIPLE=aarch64-linux-gnu
+
+            // -DLIBUNWIND_ENABLE_SHARED=OFF
+            // -DLLVM_ENABLE_EH=ON -DLLVM_ENABLE_RTTI=ON // for libunwind
+            ,
+            // "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi;compiler-rt",
+            // FMT("-DLLVM_RUNTIME_TARGETS=%s", LLVM_RUNTIME_TARGETS),
+            // FMT("-DLLVM_BUILTIN_TARGETS=%s", LLVM_RUNTIME_TARGETS),
+            FMT("-S%s", ARCHIVE(llvm-project/llvm)),
+            FMT("-DCMAKE_INSTALL_PREFIX=%s", prefix));
+
+        JB_RUN(cmake --build llvm-build --target install -j12);
+    }
+}
+
+void build_native_toolchain() {
+
+    mkdir(NATIVE_BUILD);
+    chdir(NATIVE_BUILD);
+
+    
+
+    if (!have_build_tool("make"))
+        install_gnu_package(STR(make-MAKE_VERSION));
+
+    if (!have_build_tool("makeinfo"))
+        install_gnu_package(STR(texinfo-TEXINFO_VERSION));
+
+    if (!have_build_tool("bison"))
+        install_gnu_package(STR(bison-BISON_VERSION));
+
+    if (!have_build_tool("sed"))
+        install_gnu_package(STR(sed-SED_VERSION));
+
+    chdir("..");
+}
+
+#define STAGE1_GCC(target) FMT("%s/bin/%s-gcc", STAGE1_PREFIX, target)
+
+char *get_arch(const char *target) {
+    char *arch_end = strchr(target, '-');
+
+    char *arch = FMT("%.*s", arch_end-target, target);
+    return arch;
+}
+
+#define STAGE1_PREFIX PATH(WORKSPACE, stage1)
+
+void build_stage1_gcc(const char *target) {
+
+    {
+        download_extract_gnu("binutils", STR(BINUTILS_VERSION));
+
+        mkdir(STR(binutils-stage1-build));
+        chdir(STR(binutils-stage1-build));
+
+        JB_RUN(../binutils-BINUTILS_VERSION/configure
+            --disable-multilib,
+            FMT("--with-sysroot=%s",TOOLCHAIN_TARGET(target, SYS_ROOT)),
+            FMT("--target=%s", target),
+            FMT("--prefix=%s", STAGE1_PREFIX));
+        JB_RUN(make -j12);
+        JB_RUN(make install);
+
+        chdir("..");
+    }
+
+    if (!jb_file_exists(STR(gcc-GCC_VERSION))) {
+        DOWNLOAD_AND_EXTRACT2(gcc, GCC_VERSION);
+
+        chdir(STR(gcc-GCC_VERSION));
+
+        JB_RUN(./contrib/download_prerequisites);
+
+        chdir("..");
+    }
+
+    mkdir(STR(gcc-stage1-build));
+    chdir(STR(gcc-stage1-build));
+
+    JB_RUN(../gcc-GCC_VERSION/configure --enable-languages=c
+            --with-glibc-version=GLIBC_VERSION
+            --disable-shared
+            --disable-threads
+            --disable-libatomic
+            --disable-libgomp
+            --disable-libitm
+            --disable-libmpx
+            --disable-libquadmath
+            --disable-libssp
+            --without-headers
+            --with-newlib,
+            // FMT("--with-sysroot=%s", TOOLCHAIN_TARGET(target, SYS_ROOT)),
+            FMT("--target=%s", target),
+            FMT("--prefix=%s", STAGE1_PREFIX));
+
+    JB_RUN(make -j12);
+    JB_RUN(make install);
+
+    chdir("..");
+}
+
+void build_glibc(const char *target) {
+
+    if (!jb_file_exists(STR(glibc-GLIBC_VERSION))) {
+        DOWNLOAD_AND_EXTRACT(glibc, GLIBC_VERSION);
+    }
+
+    mkdir(STR(glibc-build));
+    chdir(STR(glibc-build));
+
+    // Sigh, we use prefix=/usr here because glibc will write libc.so as a linker script with absolute file paths to libc.so.6
+    // This is problematic because when we end up using --with-sysroot with our tools, they will append the absolute path to the libc
+    // binary to the sysroot path, causing linking failures (making building libgcc difficult).
+    // We have to specify install_root=SYSROOT/usr to install the files into the intended location
+    // https://gcc.gnu.org/legacy-ml/gcc-help/2006-08/msg00237.html
+    JB_RUN(../glibc-GLIBC_VERSION/configure
+        MAKE=make
+        --disable-nls
+        --disable-multilib,
+        FMT("--host=%s", target),
+        // FMT("--target=%s", target),
+        FMT("--with-headers=%s", TOOLCHAIN_TARGET(target, SYS_ROOT/usr/include)),
+        FMT("CC=%s", STAGE1_GCC(target)),
+        FMT("BUILD_CC=%s", NATIVE_TOOLS(bin/gcc)),
+        FMT("--prefix=%s", "/usr"));
+
+    JB_RUN(make -j12 all);
+    JB_RUN(make install, FMT("install_root=%s", TOOLCHAIN_TARGET(target, SYS_ROOT)));
+
+    // JB_RUN(make install-bootstrap-headers=yes install-headers);
+    // JB_RUN(make csu/subdir_lib);
+    // JB_RUN(install csu/crt1.o csu/crti.o csu/crtn.o, TOOLCHAIN_TARGET(target, lib));
+
+    // JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/lib));
+    // JB_RUN_CMD(TARGET_GCC(target), "-nostdlib", "-nostartfiles", "-shared", "-x", "c", "/dev/null", "-o", TOOLCHAIN_TARGET(target, SYS_ROOT/lib/libc.so));
+    // JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/usr/include/gnu));
+    // JB_RUN(touch, TOOLCHAIN_TARGET(target, SYS_ROOT/usr/include/gnu/stubs.h));
+    chdir("..");
+}
+
+void build_target(const char *target) {
+
+    char *arch = get_arch(target);
+
+    mkdir(TARGET_BUILD(/));
+    chdir(TARGET_BUILD(/));
+
+    // install_llvm_toolchain(TOOLCHAIN());
+
+    char *system_path = jb_copy_string(getenv("PATH"));
+
+    putenv(FMT("PATH=%s:%s/bin:%s", NATIVE_TOOLS(bin/), STAGE1_PREFIX, getenv("PATH")));
+
+    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/usr/lib));
+    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/usr/bin));
+    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/usr/sbin));
+    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/etc));
+    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/var));
+
+    if (!jb_file_exists(TOOLCHAIN_TARGET(target, SYS_ROOT/lib)))
+        JB_RUN(ln -s, STR(./usr/lib), TOOLCHAIN_TARGET(target, SYS_ROOT/lib));
+    if (!jb_file_exists(TOOLCHAIN_TARGET(target, SYS_ROOT/bin)))
+        JB_RUN(ln -s, STR(./usr/bin), TOOLCHAIN_TARGET(target, SYS_ROOT/bin));
+    if (!jb_file_exists(TOOLCHAIN_TARGET(target, SYS_ROOT/sbin)))
+        JB_RUN(ln -s, STR(./usr/sbin), TOOLCHAIN_TARGET(target, SYS_ROOT/sbin));
+
+    if (!jb_file_exists(TOOLCHAIN_TARGET(target, SYS_ROOT/usr/include/linux)) || 1) {
+        if (!jb_file_exists(STR(linux-LINUX_VERSION))) {
+            DOWNLOAD_AND_EXTRACT_GENERIC(linux, LINUX_VERSION, https:/\/cdn.kernel.org/pub/linux/kernel/v6.x/linux-LINUX_VERSION.tar.xz);
+        }
+
+        chdir(STR(linux-LINUX_VERSION));
+
+        // need host-tools sed since linux Makefile doesnt do version verification
+        JB_RUN(make headers_install,
+            FMT("ARCH=%s", arch),
+            FMT("INSTALL_HDR_PATH=%s", TOOLCHAIN_TARGET(target, SYS_ROOT/usr)));
+
+        chdir("..");
+    }
+
+    if (!jb_file_exists(TOOLCHAIN_TARGET(target, bin/ld))) {
+        download_extract_gnu("binutils", STR(BINUTILS_VERSION));
+
+        mkdir(STR(binutils-build));
+        chdir(STR(binutils-build));
+
+        JB_RUN(../binutils-BINUTILS_VERSION/configure
+            --disable-multilib,
+            FMT("--with-sysroot=%s",TOOLCHAIN_TARGET(target, SYS_ROOT)),
+            FMT("--target=%s", target),
+            FMT("--prefix=%s", TOOLCHAIN()));
+        JB_RUN(make -j12);
+        JB_RUN(make install);
+
+        chdir("..");
+    }
+
+    build_stage1_gcc(target);
+
+    build_glibc(target);
+
+    if ((!jb_file_exists(FMT("%s/bin/%s-gcc", TOOLCHAIN(), target)))) {
+
+        if (!jb_file_exists(STR(gcc-GCC_VERSION))) {
+            DOWNLOAD_AND_EXTRACT2(gcc, GCC_VERSION);
+
+            chdir(STR(gcc-GCC_VERSION));
+
+            JB_RUN(./contrib/download_prerequisites);
+
+            chdir("..");
+        }
+
+        mkdir(STR(gcc-build));
+        chdir(STR(gcc-build));
+
+        JB_RUN(../gcc-GCC_VERSION/configure
+                --with-glibc-version=GLIBC_VERSION
+                --disable-multilib
+                --enable-shared
+                --enable-threads
+                --disable-nls,
+                FMT("--enable-languages=%s", GCC_LANGS),
+                FMT("--with-sysroot=%s", TOOLCHAIN_TARGET(target, SYS_ROOT)),
+                FMT("--target=%s", target),
+                FMT("--prefix=%s", TOOLCHAIN()));
+
+        // Finish gcc
+        JB_RUN(make -j12 all);
+        JB_RUN(make install);
+
+        chdir("..");
+    }
+
+    chdir("..");
+}
+
+int main() {
+
+    context.root = jb_getcwd();
+
+    chdir(WORKSPACE);
+
+    mkdir(ARCHIVE(/));
+
+    char *system_path = jb_copy_string(getenv("PATH"));
+
+    build_native_toolchain();
+
+    putenv(FMT("PATH=%s:%s", TOOLCHAIN(bin), getenv("PATH")));
+
+    // x86_64-linux-gnu
+    // arm64-linux-gnu
+    // Note: it seems Linux kernel Makefile won't install headers if arch is aarch64 instead of arm64
+    build_target(STR(arm64-linux-gnu));
+
+    return 0;
+}
