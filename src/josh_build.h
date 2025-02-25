@@ -304,8 +304,6 @@ void josh_build(const char *path, char *args[]) {
     josh.build_folder = "build";
     jb_build(&josh);
 
-    JB_RUN_CMD("./build/josh_builder");
-
     {
         JBVector(char *) cmds = {0};
         JBVectorPush(&cmds, "./build/josh_builder");
