@@ -25,6 +25,53 @@ Run `./bootstrap.sh` to build the `josh` driver. For fun, `./build/josh build` w
 
 Run `josh init` in an empty folder to create a template project. This creates a new `josh.build` and `src/main.c`. Run `josh build` to build the project template.
 
+### Cross-compiling
+
+Set `JBExecutable.toolchain` to instruct josh build to cross-compile. Find a target toolchain via `jb_find_toolchain()`.
+
+
+```c
+JBToolchain *toolchain = jb_find_toolchain(JB_ENUM(ARM64), JB_ENUM(Linux), JB_ENUM(GNU));
+if (toolchain != jb_native_toolchain()) {
+    if(!toolchain) {
+        printf("WARNING: no toolchain for arm64-linux-gnu; skipping build...\n");
+    }
+    else {
+        // Cross build linux executable
+        JBExecutable josh = {"josh_linux"};
+        josh.sources = (const char *[]){"src/main.c", NULL};
+        josh.build_folder = "build";
+
+        josh.toolchain = toolchain;
+        jb_build(&josh);
+    }
+}
+else {
+    printf("Host is running arm64-linux-gnu; skipping cross-build...\n");
+}
+```
+
+By default, josh build searches for `/toolchains` in the current working directory. Call `jb_set_toolchain_directory()` to use a custom path.
+
+The `toolchains` folder is typically expected to contain:
+```
+/bin/<target>-gcc
+/bin/<target>-g++
+/bin/<target>-ld
+
+/<target>/sys-root/ -- sysroot containing system headers, libc, libc++, and other packages
+```
+
+`tools/toolchain_builder.josh` can be used to build a basic Linux cross-compiler with Linux kernel headers, glibc, libstdc++, etc...
+Example:
+```
+josh build-file tools/toolchain_builder.josh arm64-linux-gnu
+```
+Using josh build's josh.build script:
+```
+josh build toolchain arm64-linux-gnu
+```
+
 ## License
 
 This program is beer-ware, see header in `src/josh_build.h`.
