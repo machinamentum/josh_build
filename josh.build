@@ -6,9 +6,8 @@ int main(int argc, char *argv[]) {
 
         JBVector(char *) args = {0};
 
-        for (int i = 2; i <  argc; i++) {
+        for (int i = 2; i < argc; i++)
             JBVectorPush(&args, argv[i]);
-        }
 
         JBVectorPush(&args, NULL);
 

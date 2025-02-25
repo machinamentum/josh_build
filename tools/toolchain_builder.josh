@@ -400,7 +400,16 @@ void build_target(const char *target) {
     chdir("..");
 }
 
-int main() {
+void usage() {
+    printf("Usage: [toolchain-builder] <target-triple> ...\n");
+}
+
+int main(int argc, char *argv[]) {
+
+    if (argc < 2) {
+        usage();
+        return 1;
+    }
 
     context.root = jb_getcwd();
 
@@ -417,7 +426,11 @@ int main() {
     // x86_64-linux-gnu
     // arm64-linux-gnu
     // Note: it seems Linux kernel Makefile won't install headers if arch is aarch64 instead of arm64
-    build_target(STR(arm64-linux-gnu));
+    // build_target(STR(arm64-linux-gnu));
+
+    for (int i = 1; i < argc; i++) {
+        build_target(argv[i]);
+    }
 
     return 0;
 }
