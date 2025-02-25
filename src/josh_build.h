@@ -48,7 +48,9 @@
 #endif
 
 // Builds and runs a josh.build
-void josh_build(const char *path);
+void josh_build(const char *path, char *args[]);
+
+#define JOSH_BUILD(path, ...) josh_build(path, (char *const []){ __VA_ARGS__ __VA_OPT__(,) NULL })
 
 #define JB_ENUM(x) JBEnum_ ## x
 
@@ -108,8 +110,8 @@ typedef struct {
 
 void jb_build(JBExecutable *exec);
 
-void jb_run_string(const char *cmd, char *extra[], const char *file, int line);
-void jb_run(char *argv[], const char *file, int line);
+void jb_run_string(const char *cmd, char *const extra[], const char *file, int line);
+void jb_run(char *const argv[], const char *file, int line);
 
 #define JB_CMD_ARRAY(...) (char **)(const char *const []){__VA_ARGS__ __VA_OPT__(,) NULL, }
 
@@ -263,7 +265,7 @@ char *_jb_read_file(const char *path, size_t *out_len) {
 
 extern const char _jb_josh_build_src[];
 
-void josh_build(const char *path) {
+void josh_build(const char *path, char *args[]) {
     char *build_source = _jb_read_file(path, NULL);
 
     JB_ASSERT(build_source, "could not read file: %s", path);
@@ -304,13 +306,28 @@ void josh_build(const char *path) {
 
     JB_RUN_CMD("./build/josh_builder");
 
+    {
+        JBVector(char *) cmds = {0};
+        JBVectorPush(&cmds, "./build/josh_builder");
+
+        for (int i = 0; args && args[i]; i++) {
+            JBVectorPush(&cmds, (char *)args[i]);
+        }
+
+        JBVectorPush(&cmds, NULL);
+
+        jb_run(cmds.data, __FILE__, __LINE__);
+
+        free(cmds.data);
+    }
+
     remove(josh_builder_file);
     remove("./build/josh_builder");
 
     free(josh_builder_file);
 }
 
-void jb_run(char *argv[], const char *file, int line) {
+void jb_run(char *const argv[], const char *file, int line) {
 
 	for (int i = 0; argv[i]; i++) {
 		printf("%s ", argv[i]);
@@ -357,7 +374,7 @@ int jb_iswhitespace(int c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v';
 }
 
-void jb_run_string(const char *cmd, char *extra[], const char *file, int line) {
+void jb_run_string(const char *cmd, char *const extra[], const char *file, int line) {
     JBVector(char *) args = {0};
 
     const char *start = cmd;

@@ -1,6 +1,21 @@
 
 
-int main() {
+int main(int argc, char *argv[]) {
+
+    if (argc >= 2 && strcmp(argv[1], "toolchain") == 0) {
+
+        JBVector(char *) args = {0};
+
+        for (int i = 2; i <  argc; i++) {
+            JBVectorPush(&args, argv[i]);
+        }
+
+        JBVectorPush(&args, NULL);
+
+        josh_build("tools/toolchain_builder.josh", args.data);
+        return 0;
+    }
+
     {
         jb_generate_embed("src/josh_build.h", "src/josh_build_embed.h");
         jb_generate_embed("src/init_josh_build.c", "src/init_josh_build_embed.h");

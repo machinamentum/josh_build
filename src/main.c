@@ -4,10 +4,11 @@
 
 void usage() {
     printf("Usage: josh [tool] <args>\n");
-    printf("    build   : build josh.build file; specify file path to josh build file, otherwise looks for josh.build in current directory\n");
-    printf("    cc      : invoke C compiler; use -target <triple> to use cross compiler\n");
-    printf("    init    : generate project template in current working directory\n");
-    printf("    library : dump josh build header library\n");
+    printf("    build      : build josh.build file in current directory\n");
+    printf("    build-file : specify file path to josh build file to build\n");
+    printf("    cc         : invoke C compiler; use -target <triple> to use cross compiler\n");
+    printf("    init       : generate project template in current working directory\n");
+    printf("    library    : dump josh build header library\n");
     printf("\n");
 }
 
@@ -47,14 +48,42 @@ int main(int argc, char *argv[]) {
 
         const char *name = "josh.build";
 
-        if (argc > 2)
-            name = argv[2];
+        if (!jb_file_exists(name)) {
+            JB_FAIL("file not found: %s", name);
+        }
+
+        JBVector(char *) args = {0};
+
+        for (int i = 2; i < argc; i++)
+            JBVectorPush(&args, argv[i]);
+
+        JBVectorPush(&args, NULL);
+
+        josh_build(name, args.data);
+
+        free(args.data);
+
+        return 0;
+    }
+
+    if (strcmp(argv[1], "build-file") == 0 && argc > 2) {
+
+        const char *name = argv[2];
 
         if (!jb_file_exists(name)) {
             JB_FAIL("file not found: %s", name);
         }
 
-        josh_build(name);
+        JBVector(char *) args = {0};
+
+        for (int i = 3; i < argc; i++)
+            JBVectorPush(&args, argv[i]);
+
+        JBVectorPush(&args, NULL);
+
+        josh_build(name, args.data);
+
+        free(args.data);
         
         return 0;
     }
@@ -62,17 +91,13 @@ int main(int argc, char *argv[]) {
     if (strcmp(argv[1], "init") == 0) {
         JB_RUN(mkdir -p src);
 
-        if (jb_file_exists("josh.build")) {
-            printf("josh.build already exists. Aborting\n");
-            exit(1);
-        }
+        if (jb_file_exists("josh.build"))
+            JB_FAIL("josh.build already exists. Aborting\n");
 
         write_file("josh.build", josh_build_init_josh_build);
 
-        if (jb_file_exists("src/main.c")) {
-            printf("src/main.c already exists. Aborting\n");
-            exit(1);
-        }
+        if (jb_file_exists("src/main.c"))
+            JB_FAIL("src/main.c already exists. Aborting\n");
 
         write_file("src/main.c", josh_build_init_src_main);
         return 0;
