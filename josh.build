@@ -37,7 +37,7 @@ int main(int argc, char *argv[]) {
             // Cross build linux executable
             JBExecutable josh = {"josh_linux"};
             josh.sources = (const char *[]){"src/main.c", NULL};
-            josh.build_folder = "build";
+            josh.build_folder = "build_linux";
 
             josh.toolchain = toolchain;
             jb_build(&josh);

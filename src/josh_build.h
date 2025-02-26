@@ -19,6 +19,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
+#include <time.h>
 
 #define JB_IS_MACOS   0
 #define JB_IS_LUNIX   0
@@ -110,8 +111,11 @@ typedef struct {
 
 void jb_build(JBExecutable *exec);
 
+void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags);
+
 void jb_run_string(const char *cmd, char *const extra[], const char *file, int line);
 void jb_run(char *const argv[], const char *file, int line);
+char *jb_run_get_output(char *const argv[], const char *file, int line);
 
 #define JB_CMD_ARRAY(...) (char **)(const char *const []){__VA_ARGS__ __VA_OPT__(,) NULL, }
 
@@ -132,6 +136,13 @@ int jb_file_exists(const char *path);
 void jb_generate_embed(const char *input_file, const char *output_file);
 
 char *jb_getcwd();
+
+time_t jb_get_last_mod_time(const char *path);
+
+// Return 1 if source-file was last modified after dest-file.
+// Fails if source doesnt exist.
+// Returns 1 if source exists and dest does not.
+int jb_file_is_newer(const char *source, const char *dest);
 
 typedef struct {
     void *data;
@@ -235,8 +246,12 @@ static inline void jb_vector_push(JBVectorGeneric *vec, void *src, int tsize) {
 
 #include <unistd.h>
 
+#include <fcntl.h>
+
 #include <sys/wait.h>
 #include <sys/param.h>
+#include <sys/stat.h>
+#include <sys/errno.h>
 
 char *_jb_read_file(const char *path, size_t *out_len) {
     FILE *f = fopen(path, "rb");
@@ -327,16 +342,16 @@ void josh_build(const char *path, char *args[]) {
 
 void jb_run(char *const argv[], const char *file, int line) {
 
-	for (int i = 0; argv[i]; i++) {
-		printf("%s ", argv[i]);
-	}
+    for (int i = 0; argv[i]; i++) {
+        printf("%s ", argv[i]);
+    }
 
-	printf("\n");
+    printf("\n");
 
     pid_t pid = fork();
-
     if (pid) {
         // parent
+
         int wstatus;
         pid_t w;
 
@@ -362,6 +377,88 @@ void jb_run(char *const argv[], const char *file, int line) {
     }
     else {
         // child
+        execvp(argv[0], argv);
+        printf("Could not run %s\n", argv[0]);
+        exit(1);
+    }
+}
+
+char *jb_run_get_output(char *const argv[], const char *file, int line) {
+
+    for (int i = 0; argv[i]; i++) {
+        printf("%s ", argv[i]);
+    }
+
+    printf("\n");
+
+    int pipefd[2];
+    pipe(pipefd);
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
+
+    pid_t pid = fork();
+    if (pid) {
+        // parent
+
+        // close write pipe
+        close(pipefd[1]);
+
+        int wstatus;
+        pid_t w;
+
+        do {
+            w = waitpid(pid, &wstatus, 0);
+
+            if (w == -1) {
+                printf("WAIT FAILED\n");
+                return NULL;
+            }
+
+        } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
+
+        if (WIFSIGNALED(wstatus)) {
+            printf("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
+            exit(1);
+        }
+
+        if (WEXITSTATUS(wstatus) != 0) {
+            printf("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
+            exit(1);
+        }
+
+        size_t buffer_size = 4096*16;
+        char *buffer = malloc(buffer_size);
+        memset(buffer, 0, buffer_size);
+        size_t off = 0;
+
+        do {
+            ssize_t bytes = read(pipefd[0], buffer+off, buffer_size-off);
+
+            if (bytes == 0)
+                break;
+
+            if (bytes > 0)
+                off += bytes;
+
+            if (off > buffer_size)
+                break;
+        } while (errno == EAGAIN);
+
+        JB_ASSERT(buffer_size > off, "ran out of space when capturing command output");
+
+        buffer[off] = 0;
+        return buffer;
+    }
+    else {
+        // child
+
+        // close read pipe
+        close(pipefd[0]);
+
+        // Map stdout and stderr to the pipe
+        dup2(pipefd[1], 0);
+        dup2(pipefd[1], 1);
+
         execvp(argv[0], argv);
         printf("Could not run %s\n", argv[0]);
         exit(1);
@@ -565,6 +662,151 @@ enum JBRuntime _jb_runtime(const char *str) {
     return JB_ENUM(INVALID_RUNTIME);
 }
 
+char **_jb_get_dependencies_c(JBToolchain *tc, const char *source, const char **cflags) {
+    const char *_arch = _jb_arch_string(tc->triple.arch);
+    const char *_vendor = _jb_vendor_string(tc->triple.vendor);
+    const char *_runtime = _jb_runtime_string(tc->triple.runtime);
+
+    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
+
+    JBVector(char *) cmd = {0};
+
+    JBVectorPush(&cmd, tc->cc);
+
+    JBVectorPush(&cmd, "-MM");
+
+    if (triplet && strstr(tc->cc, "clang") != NULL) {
+        JBVectorPush(&cmd, "-target");
+        JBVectorPush(&cmd, triplet);
+
+        // JBVectorPush(&cmd, "--rtlib=compiler-rt");
+    }
+
+    if (tc->sysroot) {
+        // TODO check if Apple LD or GNU LD
+        // JBVectorPush(&cmd, "-syslibroot");
+        JBVectorPush(&cmd, "--sysroot");
+        JBVectorPush(&cmd, tc->sysroot);
+    }
+
+    for (int i = 0; cflags && cflags[i]; i++) {
+        JBVectorPush(&cmd, (char *)cflags[i]);
+    }
+
+    JBVectorPush(&cmd, "-c");
+    JBVectorPush(&cmd, (char *)source);
+
+    JBVectorPush(&cmd, NULL);
+    char *result = jb_run_get_output(cmd.data, __FILE__, __LINE__);
+
+    free(cmd.data);
+
+    free(triplet);
+
+    if (!result)
+        return NULL;
+
+    for (int i = 0; result[i]; i++) {
+        if (result[i] == '\\' && result[i+1] == '\n')
+            result[i] = ' ';
+    }
+
+    JBVector(char *) out = {0};
+
+    char *start = strchr(result, ':')+1;
+
+    while (*start) {
+        while (*start && jb_iswhitespace(*start))
+            start += 1;
+
+        if (*start) {
+            char *end = start;
+
+            while (*end) {
+
+                {
+                    if (*end == '\\' && *(end + 1) != 0) {
+                        end += 2;
+                        continue;
+                    }
+                }
+
+                if (jb_iswhitespace(*end))
+                    break;
+
+                end += 1;
+            }
+
+            char *entry = jb_format_string("%.*s", end-start, start);
+            JBVectorPush(&out, entry);
+
+            start = end;
+        }
+    }
+
+    JBVectorPush(&out, NULL);
+
+    return out.data;
+}
+
+void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags) {
+
+    char **deps = _jb_get_dependencies_c(tc, source, cflags);
+
+    JB_ASSERT(deps, "couldn't compute dependenices for %s", source);
+
+    int needs_build = 0;
+    for (int i = 0; deps && deps[i]; i++) {
+        if (jb_file_is_newer(deps[i], output)) {
+            needs_build = 1;
+            break;
+        }
+    }
+
+    if (!needs_build)
+        return;
+
+    const char *_arch = _jb_arch_string(tc->triple.arch);
+    const char *_vendor = _jb_vendor_string(tc->triple.vendor);
+    const char *_runtime = _jb_runtime_string(tc->triple.runtime);
+
+    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
+
+    JBVector(char *) cmd = {0};
+
+    JBVectorPush(&cmd, tc->cc);
+
+    if (triplet && strstr(tc->cc, "clang") != NULL) {
+        JBVectorPush(&cmd, "-target");
+        JBVectorPush(&cmd, triplet);
+
+        // JBVectorPush(&cmd, "--rtlib=compiler-rt");
+    }
+
+    if (tc->sysroot) {
+        // TODO check if Apple LD or GNU LD
+        // JBVectorPush(&cmd, "-syslibroot");
+        JBVectorPush(&cmd, "--sysroot");
+        JBVectorPush(&cmd, tc->sysroot);
+    }
+
+    for (int i = 0; cflags && cflags[i]; i++) {
+        JBVectorPush(&cmd, (char *)cflags[i]);
+    }
+
+    JBVectorPush(&cmd, "-o");
+    JBVectorPush(&cmd, (char *)output);
+    JBVectorPush(&cmd, "-c");
+    JBVectorPush(&cmd, (char *)source);
+
+    JBVectorPush(&cmd, NULL);
+    jb_run(cmd.data, __FILE__, __LINE__);
+
+    free(cmd.data);
+
+    free(triplet);
+}
+
 void jb_build(JBExecutable *exec) {
 
     char *object_folder = jb_concat(exec->build_folder, "/object/");
@@ -593,42 +835,22 @@ void jb_build(JBExecutable *exec) {
 
         object[len-1] = 'o'; // .c -> .o
 
-        JBVector(char *) cmd = {0};
-
-        JBVectorPush(&cmd, tc->cc);
-
-        if (triplet && strstr(tc->cc, "clang") != NULL) {
-            JBVectorPush(&cmd, "-target");
-            JBVectorPush(&cmd, triplet);
-
-            // JBVectorPush(&cmd, "--rtlib=compiler-rt");
-        }
-
-        if (tc->sysroot) {
-            // TODO check if Apple LD or GNU LD
-            // JBVectorPush(&cmd, "-syslibroot");
-            JBVectorPush(&cmd, "--sysroot");
-            JBVectorPush(&cmd, tc->sysroot);
-        }
-
-        for (int i = 0; exec->cflags && exec->cflags[i]; i++) {
-        	JBVectorPush(&cmd, (char *)exec->cflags[i]);
-        }
-
-        JBVectorPush(&cmd, "-o");
-        JBVectorPush(&cmd, object);
-        JBVectorPush(&cmd, "-c");
-        JBVectorPush(&cmd, (char *)exec->sources[i]);
-
-        JBVectorPush(&cmd, NULL);
-        jb_run(cmd.data, __FILE__, __LINE__);
-
-        free(cmd.data);
+        jb_compile_c(tc, exec->sources[i], object, &exec->cflags[0]);
 
         JBVectorPush(&object_files, object);
     }
 
-    {
+    char *output_exec = jb_concat(exec->build_folder, jb_concat("/", exec->name));
+    int needs_build = 0;
+
+    JBArrayFor(&object_files) {
+        if (jb_file_is_newer(object_files.data[index], output_exec)) {
+            needs_build = 1;
+            break;
+        }
+    }
+
+    if (needs_build) {
         JBVector(char *) cmd = {0};
 
         JBVectorPush(&cmd, tc->cc);
@@ -652,7 +874,7 @@ void jb_build(JBExecutable *exec) {
         }
 
         JBVectorPush(&cmd, "-o");
-        JBVectorPush(&cmd, jb_concat(exec->build_folder, jb_concat("/", exec->name))); // Leak
+        JBVectorPush(&cmd, output_exec); // Leak
 
         JBArrayForEach(&object_files) {
             JBVectorPush(&cmd, *it);
@@ -674,8 +896,10 @@ void jb_build(JBExecutable *exec) {
     JBArrayForEach(&object_files) {
         free(*it);
     }
+
     free(object_files.data);
     free(object_folder);
+    free(output_exec);
 }
 
 int jb_file_exists(const char *path) {
@@ -690,6 +914,27 @@ char *jb_getcwd() {
         return jb_copy_string(result);
 
     return NULL;
+}
+
+time_t jb_get_last_mod_time(const char *path) {
+    if (!jb_file_exists(path))
+        return 0;
+
+    // TODO maybe JB_FAIL on failure ?
+    struct stat st;
+    stat(path, &st);
+
+    return st.st_mtime;
+}
+
+int jb_file_is_newer(const char *source, const char *dest) {
+
+    JB_ASSERT(jb_file_exists(source), "file not found: %s", source);
+
+    time_t s = jb_get_last_mod_time(source);
+    time_t d = jb_get_last_mod_time(dest);
+
+    return s > d;
 }
 
 const char *_jb_toolchain_dir = "toolchains";

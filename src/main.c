@@ -29,7 +29,7 @@ const char josh_build_init_src_main[] = {
 
 
 void write_file(const char *path, const char *text) {
-     FILE *f = fopen(path, "wb");
+    FILE *f = fopen(path, "wb");
 
     if (!f)
         return;
