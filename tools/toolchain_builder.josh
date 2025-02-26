@@ -16,6 +16,8 @@
 // * build glibc with static gcc
 // * build target gcc again, but without disabling features and using glibc instead of newlib
 
+#undef linux // we use the linux identifier token to build strings
+
 // #define TARGET_ARCHS "X86;AArch64;ARM;AVR;Mips;WebAssembly"
 #define TARGET_ARCHS X86;AArch64;ARM
 #define LLVM_RUNTIME_TARGETS "aarch64-linux-gnu"
@@ -38,6 +40,7 @@
 #define HELP2MAN_VERSION 1.43.3
 #define BASH_VERSION 5.2
 #define LIBTOOL_VERSION 2.5.4
+#define M4_VERSION 1.4.19
 
 #define LINUX_VERSION 6.13.2
 
@@ -181,17 +184,23 @@ void build_native_toolchain() {
     mkdir(NATIVE_BUILD);
     chdir(NATIVE_BUILD);
 
-    
-
-    if (!have_build_tool("make"))
+    // make doesnt build by default on Ubuntu. TODO check if system make is >= 3.8
+    // make on macOS seems to be too old out-of-the-box
+    if (JB_IS_MACOS && !have_build_tool("make"))
         install_gnu_package(STR(make-MAKE_VERSION));
 
     if (!have_build_tool("makeinfo"))
         install_gnu_package(STR(texinfo-TEXINFO_VERSION));
 
-    if (!have_build_tool("bison"))
-        install_gnu_package(STR(bison-BISON_VERSION));
+    if (!have_build_tool("bison")) {
+        if (!have_build_tool("m4"))
+            install_gnu_package(STR(m4-M4_VERSION));
 
+        install_gnu_package(STR(bison-BISON_VERSION));
+    }
+
+    // Needed for Linux headers. The Linux Makefile does not verify that the system sed is new enough.
+    // It is too old on macOS.
     if (!have_build_tool("sed"))
         install_gnu_package(STR(sed-SED_VERSION));
 
@@ -222,7 +231,7 @@ void build_stage1_gcc(const char *target) {
             FMT("--with-sysroot=%s",TOOLCHAIN_TARGET(target, SYS_ROOT)),
             FMT("--target=%s", target),
             FMT("--prefix=%s", STAGE1_PREFIX));
-        JB_RUN(make -j12);
+        JB_RUN(make -j4);
         JB_RUN(make install);
 
         chdir("..");
@@ -391,7 +400,7 @@ void build_target(const char *target) {
                 FMT("--prefix=%s", TOOLCHAIN()));
 
         // Finish gcc
-        JB_RUN(make -j12 all);
+        JB_RUN(make -j4 all);
         JB_RUN(make install);
 
         chdir("..");
@@ -419,9 +428,11 @@ int main(int argc, char *argv[]) {
 
     char *system_path = jb_copy_string(getenv("PATH"));
 
+    putenv(FMT("PATH=%s:%s", NATIVE_TOOLS(bin), system_path));
+
     build_native_toolchain();
 
-    putenv(FMT("PATH=%s:%s", TOOLCHAIN(bin), getenv("PATH")));
+    putenv(FMT("PATH=%s:%s", TOOLCHAIN(bin), system_path));
 
     // x86_64-linux-gnu
     // arm64-linux-gnu
