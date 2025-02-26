@@ -315,6 +315,34 @@ void build_glibc(const char *target) {
     chdir("..");
 }
 
+void write_file(const char *path, const char *text) {
+     FILE *f = fopen(path, "wb");
+
+    if (!f)
+        return;
+
+    fwrite(text, 1, strlen(text), f);
+    fclose(f);
+}
+
+const char *_x86_archs[] = {
+    "x86",
+    "i386",
+    "x86_64",
+    "x64",
+    NULL,
+};
+
+int is_x86_arch(const char *arch) {
+
+    for (int i = 0; _x86_archs[i]; i++) {
+        if (strcmp(arch, _x86_archs[i]) == 0)
+            return 1;
+    }
+
+    return 0;
+}
+
 void build_target(const char *target) {
 
     char *arch = get_arch(target);
@@ -347,6 +375,29 @@ void build_target(const char *target) {
         }
 
         chdir(STR(linux-LINUX_VERSION));
+
+        if (JB_IS_MACOS && is_x86_arch(arch)) {
+            // Some of the x86 targets for the linux headers require some gnu library headers and functions to build a few tools.
+            // Disable the archscripts tools from building
+
+            const char *patch =
+"--- Makefile    2025-02-26 13:13:24\n"
+"+++ Makefile    2025-02-26 13:13:28\n"
+"@@ -1354,7 +1354,7 @@\n"
+" hdr-inst := -f $(srctree)/scripts/Makefile.headersinst obj\n"
+" \n"
+" PHONY += headers\n"
+"-headers: $(version_h) scripts_unifdef uapi-asm-generic archheaders archscripts\n"
+"+headers: $(version_h) scripts_unifdef uapi-asm-generic archheaders\n"
+" \t$(if $(filter um, $(SRCARCH)), $(error Headers not exportable for UML))\n"
+" \t$(Q)$(MAKE) $(hdr-inst)=include/uapi\n"
+" \t$(Q)$(MAKE) $(hdr-inst)=arch/$(SRCARCH)/include/uapi"
+;
+
+            write_file("patch.diff", patch);
+
+            JB_RUN(patch -f -i patch.diff);
+        }
 
         // need host-tools sed since linux Makefile doesnt do version verification
         JB_RUN(make headers_install,
