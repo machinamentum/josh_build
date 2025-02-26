@@ -319,9 +319,11 @@ void josh_build(const char *path, char *args[]) {
     josh.build_folder = "build";
     jb_build(&josh);
 
+    char *josh_builder_exe = jb_format_string("%s/%s", josh.build_folder, josh.name);
     {
+        printf("[jb] run %s\n", josh_builder_exe);
         JBVector(char *) cmds = {0};
-        JBVectorPush(&cmds, "./build/josh_builder");
+        JBVectorPush(&cmds, josh_builder_exe);
 
         for (int i = 0; args && args[i]; i++) {
             JBVectorPush(&cmds, (char *)args[i]);
@@ -335,18 +337,22 @@ void josh_build(const char *path, char *args[]) {
     }
 
     remove(josh_builder_file);
-    remove("./build/josh_builder");
+    remove(josh_builder_exe);
 
     free(josh_builder_file);
 }
 
+int _jb_verbose_show_commands = 0;
+
 void jb_run(char *const argv[], const char *file, int line) {
 
-    for (int i = 0; argv[i]; i++) {
-        printf("%s ", argv[i]);
-    }
+    if (_jb_verbose_show_commands) {
+        for (int i = 0; argv[i]; i++) {
+            printf("%s ", argv[i]);
+        }
 
-    printf("\n");
+        printf("\n");
+    }
 
     pid_t pid = fork();
     if (pid) {
@@ -385,11 +391,13 @@ void jb_run(char *const argv[], const char *file, int line) {
 
 char *jb_run_get_output(char *const argv[], const char *file, int line) {
 
-    for (int i = 0; argv[i]; i++) {
-        printf("%s ", argv[i]);
-    }
+    if (_jb_verbose_show_commands) {
+        for (int i = 0; argv[i]; i++) {
+            printf("%s ", argv[i]);
+        }
 
-    printf("\n");
+        printf("\n");
+    }
 
     int pipefd[2];
     pipe(pipefd);
@@ -766,6 +774,8 @@ void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const
     if (!needs_build)
         return;
 
+    printf("[jb] compile %s\n", source);
+
     const char *_arch = _jb_arch_string(tc->triple.arch);
     const char *_vendor = _jb_vendor_string(tc->triple.vendor);
     const char *_runtime = _jb_runtime_string(tc->triple.runtime);
@@ -851,6 +861,9 @@ void jb_build(JBExecutable *exec) {
     }
 
     if (needs_build) {
+
+        printf("[jb] link %s\n", output_exec);
+
         JBVector(char *) cmd = {0};
 
         JBVectorPush(&cmd, tc->cc);
