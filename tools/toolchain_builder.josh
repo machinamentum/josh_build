@@ -41,6 +41,7 @@
 #define BASH_VERSION 5.2
 #define LIBTOOL_VERSION 2.5.4
 #define M4_VERSION 1.4.19
+#define GAWK_VERSION 5.3.1
 
 #define LINUX_VERSION 6.13.2
 
@@ -203,6 +204,9 @@ void build_native_toolchain() {
     // It is too old on macOS.
     if (!have_build_tool("sed"))
         install_gnu_package(STR(sed-SED_VERSION));
+
+    if (!have_build_tool("gawk"))
+        install_gnu_package(STR(gawk-GAWK_VERSION));
 
     chdir("..");
 }
