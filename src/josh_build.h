@@ -771,6 +771,8 @@ void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const
         }
     }
 
+    free(deps);
+
     if (!needs_build)
         return;
 
