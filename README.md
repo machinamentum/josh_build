@@ -11,7 +11,7 @@ Usually there is a combination of:
   * build scripts are plain C code that get concatenated with a josh_build.h header
   * the most useful bits of the API take seconds to understand
     * `JB_RUN(mkdir -p build);` executes `mkdir -p build` just as it would on a command line
-    * build an executable in 3 lines of code `JBExecutable josh = {"josh"}; josh.sources = (const char *[]){"src/main.c", NULL}; jb_build(&josh);`
+    * build an executable in 3 lines of code `JBExecutable josh = {"josh"}; josh.sources = (const char *[]){"src/main.c", NULL}; jb_build_exe(&josh);`
   * `josh library` produces a copy of `josh_build.h` to be `#include`'d so that you never need the `josh` driver again
   * written by a person without an agenda
 
@@ -43,7 +43,7 @@ if (toolchain != jb_native_toolchain()) {
         josh.build_folder = "build";
 
         josh.toolchain = toolchain;
-        jb_build(&josh);
+        jb_build_exe(&josh);
     }
 }
 else {
