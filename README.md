@@ -17,13 +17,13 @@ Usually there is a combination of:
 
 ## Build
 
-Run `./bootstrap.sh` to build the `josh` driver. For fun, `./build/josh build` will build the driver again but using the josh build system in `josh.build`.
+Run `./bootstrap.sh` to build the `josh` driver. For fun, `./build/josh build` will build the driver again but using the josh build system in `build.josh`.
 
 ## Usage
 
 ### Quick Start
 
-Run `josh init` in an empty folder to create a template project. This creates a new `josh.build` and `src/main.c`. Run `josh build` to build the project template.
+Run `josh init` in an empty folder to create a template project. This creates a new `build.josh` and `src/main.c`. Run `josh build` to build the project template.
 
 ### Cross-compiling
 
@@ -67,7 +67,7 @@ Example:
 ```
 josh build-file tools/toolchain_builder.josh arm64-linux-gnu
 ```
-Using josh build's josh.build script:
+Using josh build's build.josh script:
 ```
 josh build toolchain arm64-linux-gnu
 ```
