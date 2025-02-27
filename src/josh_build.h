@@ -424,16 +424,6 @@ char *jb_run_get_output(char *const argv[], const char *file, int line) {
 
         } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
 
-        if (WIFSIGNALED(wstatus)) {
-            printf("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
-            exit(1);
-        }
-
-        if (WEXITSTATUS(wstatus) != 0) {
-            printf("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
-            exit(1);
-        }
-
         size_t buffer_size = 4096*16;
         char *buffer = malloc(buffer_size);
         memset(buffer, 0, buffer_size);
@@ -455,6 +445,19 @@ char *jb_run_get_output(char *const argv[], const char *file, int line) {
         JB_ASSERT(buffer_size > off, "ran out of space when capturing command output");
 
         buffer[off] = 0;
+
+        if (WIFSIGNALED(wstatus)) {
+            puts(buffer);
+            printf("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
+            exit(1);
+        }
+
+        if (WEXITSTATUS(wstatus) != 0) {
+            puts(buffer);
+            printf("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
+            exit(1);
+        }
+
         return buffer;
     }
     else {
