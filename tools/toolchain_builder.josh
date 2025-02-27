@@ -212,6 +212,7 @@ void build_native_toolchain() {
 }
 
 #define STAGE1_GCC(target) FMT("%s/bin/%s-gcc", STAGE1_PREFIX, target)
+#define STAGE1_GXX(target) FMT("%s/bin/%s-g++", STAGE1_PREFIX, target)
 
 char *get_arch(const char *target) {
     char *arch_end = strchr(target, '-');
@@ -254,7 +255,7 @@ void build_stage1_gcc(const char *target) {
     mkdir(STR(gcc-stage1-build));
     chdir(STR(gcc-stage1-build));
 
-    JB_RUN(../gcc-GCC_VERSION/configure --enable-languages=c
+    JB_RUN(../gcc-GCC_VERSION/configure
             --with-glibc-version=GLIBC_VERSION
             --disable-shared
             --disable-threads
@@ -264,9 +265,16 @@ void build_stage1_gcc(const char *target) {
             --disable-libmpx
             --disable-libquadmath
             --disable-libssp
+            --disable-libsanitizer
+            --disable-libvtv
+            --disable-libstdcxx
+            --disable-multilib
+            --disable-gcov
+            --disable-decimal-float
             --without-headers
             --with-newlib,
-            // FMT("--with-sysroot=%s", TOOLCHAIN_TARGET(target, SYS_ROOT)),
+            FMT("--enable-languages=%s", "c,c++"),
+            FMT("--with-sysroot=%s", TOOLCHAIN_TARGET(target, SYS_ROOT)),
             FMT("--target=%s", target),
             FMT("--prefix=%s", STAGE1_PREFIX));
 
@@ -298,7 +306,8 @@ void build_glibc(const char *target) {
         // FMT("--target=%s", target),
         FMT("--with-headers=%s", TOOLCHAIN_TARGET(target, SYS_ROOT/usr/include)),
         FMT("CC=%s", STAGE1_GCC(target)),
-        FMT("BUILD_CC=%s", NATIVE_TOOLS(bin/gcc)),
+        FMT("CXX=%s", STAGE1_GXX(target)),
+        // FMT("BUILD_CC=%s", NATIVE_TOOLS(bin/gcc)),
         FMT("--prefix=%s", "/usr"));
 
     JB_RUN(make -j12 all);
