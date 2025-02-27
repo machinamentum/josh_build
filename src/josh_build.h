@@ -117,6 +117,7 @@ void jb_run_string(const char *cmd, char *const extra[], const char *file, int l
 void jb_run(char *const argv[], const char *file, int line);
 char *jb_run_get_output(char *const argv[], const char *file, int line);
 
+#define JB_STRING_ARRAY(...) (const char *[]){__VA_ARGS__ __VA_OPT__(,) NULL, }
 #define JB_CMD_ARRAY(...) (char **)(const char *const []){__VA_ARGS__ __VA_OPT__(,) NULL, }
 
 #define JB_RUN_CMD(...) jb_run(JB_CMD_ARRAY(__VA_ARGS__), __FILE__, __LINE__)
@@ -314,8 +315,7 @@ void josh_build(const char *path, char *args[]) {
     fclose(out);
 
     JBExecutable josh = {"josh_builder"};
-    josh.sources = (const char *[]){josh_builder_file, NULL};
-    josh.cflags = (const char *[]){"-Wno-unknown-escape-sequence", NULL};
+    josh.sources = JB_STRING_ARRAY(josh_builder_file);
     josh.build_folder = "build";
     jb_build(&josh);
 
