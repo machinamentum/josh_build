@@ -12,6 +12,13 @@
 // project-level configuration/build functions
 // utility functions
 
+// Many josh build API functions use `char **` or `char *[]` arguments.
+// When `string-array` is used in documentation, it refers to this data type and pattenr:
+// These represent arrays of strings where the final entry is followed by the value NULL.
+// For example, `(char *[]){ "mycoolsrc.c", "myawesomesrc.c", NULL }`
+// A convenience macro is provided: JB_STRING_ARRAY("mycoolsrc.c", "myawesomesrc.c")
+// Convenience function to count entries in string array: jb_string_array_count(array)
+
 #ifndef JOSH_BUILD_H
 #define JOSH_BUILD_H
 
@@ -50,6 +57,10 @@
 
 // Builds and runs a build.josh
 void josh_build(const char *path, char *args[]);
+
+// Parsers argv arguments and applies built-in options for recoginized switches.
+// Returns a string-array with remaining arguments that we not consumed.
+char **josh_parse_arguments(int argc, char *argv[]);
 
 #define JOSH_BUILD(path, ...) josh_build(path, (char *const []){ __VA_ARGS__ __VA_OPT__(,) NULL })
 
@@ -121,6 +132,8 @@ char *jb_run_get_output(char *const argv[], const char *file, int line);
 
 #define JB_STRING_ARRAY(...) (const char *[]){__VA_ARGS__ __VA_OPT__(,) NULL, }
 #define JB_CMD_ARRAY(...) (char **)(const char *const []){__VA_ARGS__ __VA_OPT__(,) NULL, }
+
+int jb_string_array_count(char **array);
 
 #define JB_RUN_CMD(...) jb_run(JB_CMD_ARRAY(__VA_ARGS__), __FILE__, __LINE__)
 
@@ -347,6 +360,41 @@ void josh_build(const char *path, char *args[]) {
 
 int _jb_verbose_show_commands = 0;
 
+char **josh_parse_arguments(int argc, char *argv[]) {
+
+    JBVector(char *) out = {0};
+
+    const char *log_switch = "--log=";
+    const char *log_level_default = "default";
+    const char *log_level_verbose = "verbose";
+
+    const char *verbose_switch = "--verbose"; // same as --log=verbose
+
+    for (int i = 0; i < argc; i++) {
+        if (strncmp(argv[i], log_switch, strlen(log_switch)) == 0) {
+            const char *level = argv[i] + strlen(log_switch);
+
+            if (strcmp(level, log_level_verbose) == 0) {
+                _jb_verbose_show_commands = 1;
+            }
+            else if (strcmp(level, log_level_default) == 0) {
+                // no-op
+            }
+            else {
+                JB_FAIL("unrecognized log level: %s", level);
+            }
+        }
+        else if (strcmp(argv[i], verbose_switch) == 0) {
+            _jb_verbose_show_commands = 1;
+        }
+        else {
+            JBVectorPush(&out, argv[i]);
+        }
+    }
+
+    return out.data;
+}
+
 void jb_run(char *const argv[], const char *file, int line) {
 
     if (_jb_verbose_show_commands) {
@@ -526,6 +574,14 @@ void jb_run_string(const char *cmd, char *const extra[], const char *file, int l
     }
 
     free(args.data);
+}
+
+int jb_string_array_count(char **array) {
+    int i = 0;
+    while (array && array[i])
+        i += 1;
+
+    return i;
 }
 
 char *jb_concat(const char *lhs, const char *rhs) {

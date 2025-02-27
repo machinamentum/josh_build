@@ -2,6 +2,9 @@
 
 int main(int argc, char *argv[]) {
 
+    argv = josh_parse_arguments(argc, argv);
+    argc = jb_string_array_count(argv);
+
     if (argc >= 2 && strcmp(argv[1], "toolchain") == 0) {
 
         JBVector(char *) args = {0};
