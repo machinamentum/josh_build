@@ -109,7 +109,7 @@ typedef struct {
     JBToolchain *toolchain;
 } JBExecutable;
 
-void jb_build(JBExecutable *exec);
+void jb_build_exe(JBExecutable *exec);
 
 void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags);
 
@@ -317,7 +317,7 @@ void josh_build(const char *path, char *args[]) {
     JBExecutable josh = {"josh_builder"};
     josh.sources = JB_STRING_ARRAY(josh_builder_file);
     josh.build_folder = "build";
-    jb_build(&josh);
+    jb_build_exe(&josh);
 
     char *josh_builder_exe = jb_format_string("%s/%s", josh.build_folder, josh.name);
     {
@@ -822,7 +822,7 @@ void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const
     free(triplet);
 }
 
-void jb_build(JBExecutable *exec) {
+void jb_build_exe(JBExecutable *exec) {
 
     char *object_folder = jb_concat(exec->build_folder, "/object/");
 

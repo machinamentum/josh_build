@@ -25,7 +25,7 @@ int main(int argc, char *argv[]) {
         JBExecutable josh = {"josh"};
         josh.sources = (const char *[]){"src/main.c", NULL};
         josh.build_folder = "build";
-        jb_build(&josh);
+        jb_build_exe(&josh);
     }
 
     JBToolchain *toolchain = jb_find_toolchain(JB_ENUM(ARM64), JB_ENUM(Linux), JB_ENUM(GNU));
@@ -40,7 +40,7 @@ int main(int argc, char *argv[]) {
             josh.build_folder = "build_linux";
 
             josh.toolchain = toolchain;
-            jb_build(&josh);
+            jb_build_exe(&josh);
         }
     }
     else {
