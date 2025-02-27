@@ -105,6 +105,7 @@ typedef struct {
     const char *build_folder;
 
     const char **cflags;
+    const char **cxxflags;
 
     JBToolchain *toolchain;
 } JBExecutable;
@@ -112,6 +113,7 @@ typedef struct {
 void jb_build_exe(JBExecutable *exec);
 
 void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags);
+void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, const char **cxxflags);
 
 void jb_run_string(const char *cmd, char *const extra[], const char *file, int line);
 void jb_run(char *const argv[], const char *file, int line);
@@ -130,6 +132,7 @@ char *jb_copy_string(const char *str);
 char *jb_format_string(const char *fmt, ...);
 
 const char *jb_filename(const char *path);
+const char *jb_extension(const char *path);
 
 int jb_file_exists(const char *path);
 
@@ -603,6 +606,17 @@ const char *jb_filename(const char *path) {
     return path;
 }
 
+const char *jb_extension(const char *path) {
+    const char *filename = jb_filename(path);
+
+    const char *ext = strrchr(filename, '.');
+
+    if (ext)
+        ext += 1;
+
+    return ext;
+}
+
 const char *_jb_arch_string(enum JBArch arch) {
     switch (arch) {
     case JB_ENUM(INVALID_ARCH):
@@ -673,7 +687,7 @@ enum JBRuntime _jb_runtime(const char *str) {
     return JB_ENUM(INVALID_RUNTIME);
 }
 
-char **_jb_get_dependencies_c(JBToolchain *tc, const char *source, const char **cflags) {
+char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *source, const char **cflags) {
     const char *_arch = _jb_arch_string(tc->triple.arch);
     const char *_vendor = _jb_vendor_string(tc->triple.vendor);
     const char *_runtime = _jb_runtime_string(tc->triple.runtime);
@@ -682,11 +696,11 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *source, const char **
 
     JBVector(char *) cmd = {0};
 
-    JBVectorPush(&cmd, tc->cc);
+    JBVectorPush(&cmd, (char *)tool);
 
     JBVectorPush(&cmd, "-MM");
 
-    if (triplet && strstr(tc->cc, "clang") != NULL) {
+    if (triplet && strstr(tool, "clang") != NULL) {
         JBVectorPush(&cmd, "-target");
         JBVectorPush(&cmd, triplet);
 
@@ -762,7 +776,9 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *source, const char **
 
 void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags) {
 
-    char **deps = _jb_get_dependencies_c(tc, source, cflags);
+    JB_ASSERT(tc->cc, "Toolchain missing C compiler");
+
+    char **deps = _jb_get_dependencies_c(tc, tc->cc, source, cflags);
 
     JB_ASSERT(deps, "couldn't compute dependenices for %s", source);
 
@@ -822,6 +838,74 @@ void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const
     free(triplet);
 }
 
+void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, const char **cflags) {
+
+    JB_ASSERT(tc->cxx, "Toolchain missing C++ compiler");
+
+    char **deps = _jb_get_dependencies_c(tc, tc->cxx, source, cflags);
+
+    JB_ASSERT(deps, "couldn't compute dependenices for %s", source);
+
+    int needs_build = 0;
+    for (int i = 0; deps && deps[i]; i++) {
+        if (jb_file_is_newer(deps[i], output)) {
+            needs_build = 1;
+            break;
+        }
+    }
+
+    free(deps);
+
+    if (!needs_build)
+        return;
+
+    printf("[jb] compile %s\n", source);
+
+    const char *_arch = _jb_arch_string(tc->triple.arch);
+    const char *_vendor = _jb_vendor_string(tc->triple.vendor);
+    const char *_runtime = _jb_runtime_string(tc->triple.runtime);
+
+    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
+
+    JBVector(char *) cmd = {0};
+
+    JBVectorPush(&cmd, tc->cxx);
+
+    if (triplet && strstr(tc->cxx, "clang") != NULL) {
+        JBVectorPush(&cmd, "-target");
+        JBVectorPush(&cmd, triplet);
+
+        // JBVectorPush(&cmd, "--rtlib=compiler-rt");
+    }
+
+    if (tc->sysroot) {
+        // TODO check if Apple LD or GNU LD
+        // JBVectorPush(&cmd, "-syslibroot");
+        JBVectorPush(&cmd, "--sysroot");
+        JBVectorPush(&cmd, tc->sysroot);
+    }
+
+    for (int i = 0; cflags && cflags[i]; i++) {
+        JBVectorPush(&cmd, (char *)cflags[i]);
+    }
+
+    JBVectorPush(&cmd, "-o");
+    JBVectorPush(&cmd, (char *)output);
+    JBVectorPush(&cmd, "-c");
+    JBVectorPush(&cmd, (char *)source);
+
+    JBVectorPush(&cmd, NULL);
+    jb_run(cmd.data, __FILE__, __LINE__);
+
+    free(cmd.data);
+
+    free(triplet);
+}
+
+int _jb_supported_source_ext(const char *ext) {
+    return strcmp(ext, "c") == 0 || strcmp(ext, "cpp") == 0;
+}
+
 void jb_build_exe(JBExecutable *exec) {
 
     char *object_folder = jb_concat(exec->build_folder, "/object/");
@@ -834,23 +918,31 @@ void jb_build_exe(JBExecutable *exec) {
 
     char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
 
-    if (!tc->cc) {
-        JB_FAIL("Toolchain missing C compiler");
-    }
-
     JB_RUN_CMD("mkdir", "-p", exec->build_folder);
     JB_RUN_CMD("mkdir", "-p", object_folder);
 
     JBVector(char *) object_files = {0};
 
+    char *link_command = tc->cc;
+
     for (int i = 0; exec->sources[i]; i++) {
         const char *filename = jb_filename(exec->sources[i]);
+
+        const char *ext = jb_extension(exec->sources[i]);
+
+        JB_ASSERT(ext && _jb_supported_source_ext(ext), "unsupported file type: %s", ext ? ext : "unknown");
+
         char *object = jb_concat(object_folder, filename);
-        size_t len = strlen(object);
 
-        object[len-1] = 'o'; // .c -> .o
+        char *o_ext = object+strlen(object)-strlen(ext);
+        memcpy(o_ext, "o", 2); // 2 to include NULL byte
 
-        jb_compile_c(tc, exec->sources[i], object, &exec->cflags[0]);
+        if (strcmp(ext, "c") == 0)
+            jb_compile_c(tc, exec->sources[i], object, &exec->cflags[0]);
+        else if (strcmp(ext, "cpp") == 0) {
+            jb_compile_cxx(tc, exec->sources[i], object, &exec->cxxflags[0]);
+            link_command = tc->cxx;
+        }
 
         JBVectorPush(&object_files, object);
     }
@@ -871,7 +963,7 @@ void jb_build_exe(JBExecutable *exec) {
 
         JBVector(char *) cmd = {0};
 
-        JBVectorPush(&cmd, tc->cc);
+        JBVectorPush(&cmd, link_command);
 
         if (strstr(tc->cc, "clang") != NULL) {
             JBVectorPush(&cmd, "-fuse-ld=lld");
