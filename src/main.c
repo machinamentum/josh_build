@@ -4,7 +4,7 @@
 
 void usage() {
     printf("Usage: josh [tool] <args>\n");
-    printf("    build      : build josh.build file in current directory\n");
+    printf("    build      : build build.josh file in current directory\n");
     printf("    build-file : specify file path to josh build file to build\n");
     printf("    cc         : invoke C compiler; use -target <triple> to use cross compiler\n");
     printf("    init       : generate project template in current working directory\n");
@@ -46,7 +46,7 @@ int main(int argc, char *argv[]) {
 
     if (strcmp(argv[1], "build") == 0) {
 
-        const char *name = "josh.build";
+        const char *name = "build.josh";
 
         if (!jb_file_exists(name)) {
             JB_FAIL("file not found: %s", name);
@@ -91,10 +91,10 @@ int main(int argc, char *argv[]) {
     if (strcmp(argv[1], "init") == 0) {
         JB_RUN(mkdir -p src);
 
-        if (jb_file_exists("josh.build"))
-            JB_FAIL("josh.build already exists. Aborting\n");
+        if (jb_file_exists("build.josh"))
+            JB_FAIL("build.josh already exists. Aborting\n");
 
-        write_file("josh.build", josh_build_init_josh_build);
+        write_file("build.josh", josh_build_init_josh_build);
 
         if (jb_file_exists("src/main.c"))
             JB_FAIL("src/main.c already exists. Aborting\n");

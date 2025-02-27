@@ -8,7 +8,7 @@
  */
 
 // The josh API is composed of 3 sets of functions:
-// high-level driver functions (ie, build a josh.build file) start with josh_*
+// high-level driver functions (ie, build a build.josh file) start with josh_*
 // project-level configuration/build functions
 // utility functions
 
@@ -48,7 +48,7 @@
 #define JB_DEFAULT_ARCH JB_ENUM(ARM64)
 #endif
 
-// Builds and runs a josh.build
+// Builds and runs a build.josh
 void josh_build(const char *path, char *args[]);
 
 #define JOSH_BUILD(path, ...) josh_build(path, (char *const []){ __VA_ARGS__ __VA_OPT__(,) NULL })
@@ -310,7 +310,7 @@ void josh_build(const char *path, char *args[]) {
         fputs("};\n", out);
     }
 
-    fputs("#line 1 \"josh.build.c\"\n", out);
+    fputs("#line 1 \"build.josh.c\"\n", out);
     fwrite(build_source, 1, strlen(build_source), out);
     fclose(out);
 
