@@ -13,7 +13,7 @@
 // utility functions
 
 // Many josh build API functions use `char **` or `char *[]` arguments.
-// When `string-array` is used in documentation, it refers to this data type and pattenr:
+// When `string-array` is used in documentation, it refers to this data type and pattern:
 // These represent arrays of strings where the final entry is followed by the value NULL.
 // For example, `(char *[]){ "mycoolsrc.c", "myawesomesrc.c", NULL }`
 // A convenience macro is provided: JB_STRING_ARRAY("mycoolsrc.c", "myawesomesrc.c")
