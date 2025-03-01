@@ -115,6 +115,7 @@ typedef struct {
 
     const char *build_folder;
 
+    const char **ldflags;
     const char **cflags;
     const char **cxxflags;
 
@@ -1054,6 +1055,10 @@ void jb_build_exe(JBExecutable *exec) {
         // else if (tc->triple.runtime == JB_ENUM(GNU)) {
         //     JBVectorPush(&cmd, "-lc");
         // }
+
+        for (int i = 0; exec->ldflags && exec->ldflags[i]; i++) {
+            JBVectorPush(&cmd, (char *)exec->ldflags[i]);
+        }
 
         JBVectorPush(&cmd, NULL);
         jb_run(cmd.data, __FILE__, __LINE__);
