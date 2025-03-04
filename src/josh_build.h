@@ -23,6 +23,7 @@
 #define JOSH_BUILD_H
 
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
@@ -175,6 +176,7 @@ int jb_string_array_count(char **array);
 
 char *jb_concat(const char *lhs, const char *rhs);
 char *jb_copy_string(const char *str);
+char *jb_va_format_string(const char *fmt, va_list args);
 char *jb_format_string(const char *fmt, ...);
 
 const char *jb_filename(const char *path);
@@ -285,7 +287,7 @@ static inline void jb_vector_push(JBVectorGeneric *vec, void *src, int tsize) {
     }
 
 
-#define JB_FAIL(msg, ...) do { printf(msg "\n" __VA_OPT__(,) __VA_ARGS__); exit(1); } while(0)
+#define JB_FAIL(msg, ...) do { jb_log_print(msg "\n" __VA_OPT__(,) __VA_ARGS__); exit(1); } while(0)
 
 #define JB_ASSERT(cond, msg, ...) if (!(cond)) JB_FAIL(msg, __VA_ARGS__)
 
@@ -312,10 +314,16 @@ int jb_iswhitespace(int c);
 int jb_isalpha(int c);
 int jb_isalphanumeric(int c);
 
+void jb_log_set_file(const char *path);
+void jb_va_log(const char *fmt, va_list args);
+void jb_log(const char *fmt, ...);
+void jb_log_print(const char *fmt, ...);
+
+#define JB_LOG(fmt, ...) jb_log_print("[jb] " fmt __VA_OPT__(,) __VA_ARGS__)
+
 #ifdef JOSH_BUILD_IMPL
 
 #include <string.h>
-#include <stdarg.h>
 
 #include <unistd.h>
 
@@ -325,6 +333,64 @@ int jb_isalphanumeric(int c);
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/errno.h>
+
+int _jb_log_print_only = 0;
+int _jb_verbose_show_commands = 0;
+int _jb_log_fd = -1;
+
+void jb_log_set_file(const char *path) {
+    int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0777);
+
+
+    if (fd < 0) {
+        // We can't use JB_ macros since they use the logging system and we may
+        // get here from jb_va_log
+        printf("could not open log file: %s", path);
+        exit(1);
+    }
+
+    if (_jb_log_fd >= 0)
+        close(_jb_log_fd);
+
+    _jb_log_fd = fd;
+}
+
+void jb_va_log(const char *fmt, va_list args) {
+    if (_jb_log_print_only)
+        return;
+
+    if (_jb_log_fd == -1) {
+        jb_log_set_file("josh.log");
+    }
+
+    char *out = jb_va_format_string(fmt, args);
+
+    write(_jb_log_fd, out, strlen(out));
+    fsync(_jb_log_fd);
+}
+
+void jb_log(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    jb_va_log(fmt, args);
+    va_end(args);
+}
+
+void jb_log_print(const char *fmt, ...) {
+    {
+        va_list args;
+        va_start(args, fmt);
+        vprintf(fmt, args);
+        va_end(args);
+    }
+
+    {
+        va_list args;
+        va_start(args, fmt);
+        jb_va_log(fmt, args);
+        va_end(args);
+    }
+}
 
 char *_jb_read_file(const char *path, size_t *out_len) {
     FILE *f = fopen(path, "rb");
@@ -393,7 +459,7 @@ void josh_build(const char *path, char *args[]) {
 
     char *josh_builder_exe = jb_format_string("%s/%s", josh.build_folder, josh.name);
     {
-        printf("[jb] run %s\n", josh_builder_exe);
+        JB_LOG("run %s\n", josh_builder_exe);
         JBVector(char *) cmds = {0};
         JBVectorPush(&cmds, josh_builder_exe);
 
@@ -414,13 +480,12 @@ void josh_build(const char *path, char *args[]) {
     free(josh_builder_file);
 }
 
-int _jb_verbose_show_commands = 0;
-
 char **josh_parse_arguments(int argc, char *argv[]) {
 
     JBVector(char *) out = {0};
 
     const char *log_switch = "--log=";
+    const char *log_level_none = "none";
     const char *log_level_default = "default";
     const char *log_level_verbose = "verbose";
 
@@ -435,6 +500,9 @@ char **josh_parse_arguments(int argc, char *argv[]) {
             }
             else if (strcmp(level, log_level_default) == 0) {
                 // no-op
+            }
+            else if (strcmp(level, log_level_none) == 0) {
+                _jb_log_print_only = 1;
             }
             else {
                 JB_FAIL("unrecognized log level: %s", level);
@@ -455,43 +523,89 @@ void jb_run(char *const argv[], const char *file, int line) {
 
     if (_jb_verbose_show_commands) {
         JBNullArrayFor(argv) {
-            printf("%s ", argv[index]);
+            jb_log_print("%s ", argv[index]);
         }
 
-        printf("\n");
+        jb_log_print("\n");
     }
+
+    int pipefd[2];
+    pipe(pipefd);
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
 
     pid_t pid = fork();
     if (pid) {
         // parent
 
+        // close write pipe
+        close(pipefd[1]);
+
         int wstatus;
         pid_t w;
+
+        const size_t buffer_size = 4096;
+        char buffer[buffer_size];
+        memset(buffer, 0, buffer_size);
 
         do {
             w = waitpid(pid, &wstatus, 0);
 
             if (w == -1) {
-                printf("WAIT FAILED\n");
+                jb_log_print("WAIT FAILED\n");
                 return;
             }
 
+            do {
+                ssize_t bytes = read(pipefd[0], buffer, buffer_size-1);
+
+                if (bytes == 0)
+                    break;
+
+                if (bytes > 0) {
+                    buffer[bytes] = 0;
+                    jb_log_print("%s", buffer);
+                }
+
+            } while (errno == EAGAIN);
+
         } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
 
+        do {
+            ssize_t bytes = read(pipefd[0], buffer, buffer_size-1);
+
+            if (bytes == 0)
+                break;
+
+            if (bytes > 0) {
+                buffer[bytes] = 0;
+                jb_log_print("%s", buffer);
+            }
+
+        } while (errno == EAGAIN);
+
         if (WIFSIGNALED(wstatus)) {
-            printf("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
+            jb_log_print("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
             exit(1);
         }
 
         if (WEXITSTATUS(wstatus) != 0) {
-            printf("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
+            jb_log_print("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
             exit(1);
         }
     }
     else {
         // child
+
+        // close read pipe
+        close(pipefd[0]);
+
+        // Map stdout and stderr to the pipe
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+
         execvp(argv[0], argv);
-        printf("Could not run %s\n", argv[0]);
+        jb_log_print("Could not run %s\n", argv[0]);
         exit(1);
     }
 }
@@ -500,10 +614,10 @@ char *jb_run_get_output(char *const argv[], const char *file, int line) {
 
     if (_jb_verbose_show_commands) {
         JBNullArrayFor(argv) {
-            printf("%s ", argv[index]);
+            jb_log_print("%s ", argv[index]);
         }
 
-        printf("\n");
+        jb_log_print("\n");
     }
 
     int pipefd[2];
@@ -532,7 +646,7 @@ char *jb_run_get_output(char *const argv[], const char *file, int line) {
             w = waitpid(pid, &wstatus, 0);
 
             if (w == -1) {
-                printf("WAIT FAILED\n");
+                jb_log_print("WAIT FAILED\n");
                 return NULL;
             }
 
@@ -556,13 +670,13 @@ char *jb_run_get_output(char *const argv[], const char *file, int line) {
 
         if (WIFSIGNALED(wstatus)) {
             puts(buffer);
-            printf("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
+            jb_log_print("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
             exit(1);
         }
 
         if (WEXITSTATUS(wstatus) != 0) {
             puts(buffer);
-            printf("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
+            jb_log_print("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
             exit(1);
         }
 
@@ -575,11 +689,11 @@ char *jb_run_get_output(char *const argv[], const char *file, int line) {
         close(pipefd[0]);
 
         // Map stdout and stderr to the pipe
-        dup2(pipefd[1], 0);
-        dup2(pipefd[1], 1);
+        dup2(pipefd[1], STDERR_FILENO);
+        dup2(pipefd[1], STDOUT_FILENO);
 
         execvp(argv[0], argv);
-        printf("Could not run %s\n", argv[0]);
+        jb_log_print("Could not run %s\n", argv[0]);
         exit(1);
     }
 }
@@ -711,7 +825,7 @@ char *jb_copy_string(const char *str) {
     return out;
 }
 
-char *jb_format_string(const char *fmt, ...) {
+char *jb_va_format_string(const char *fmt, va_list args) {
     size_t size = 4096;
 
     char *buf = malloc(size);
@@ -719,12 +833,12 @@ char *jb_format_string(const char *fmt, ...) {
     int result;
 
     {
-        va_list args;
-        va_start(args, fmt);
+        va_list args_copy;
+        va_copy(args_copy, args);
 
-        result = vsnprintf(buf, size, fmt, args);
+        result = vsnprintf(buf, size, fmt, args_copy);
 
-        va_end(args);
+        va_end(args_copy);
     }
 
     if (result < 0) {
@@ -739,12 +853,12 @@ char *jb_format_string(const char *fmt, ...) {
     buf = realloc(buf, size);
 
     {
-        va_list args;
-        va_start(args, fmt);
+        va_list args_copy;
+        va_copy(args_copy, args);
 
-        result = vsnprintf(buf, size, fmt, args);
+        result = vsnprintf(buf, size, fmt, args_copy);
 
-        va_end(args);
+        va_end(args_copy);
     }
 
     if (result < 0) {
@@ -753,6 +867,14 @@ char *jb_format_string(const char *fmt, ...) {
     }
 
     return buf;
+}
+
+char *jb_format_string(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    char *out = jb_va_format_string(fmt, args);
+    va_end(args);
+    return out;
 }
 
 const char *jb_filename(const char *path) {
@@ -959,7 +1081,7 @@ void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const
     if (!needs_build)
         return;
 
-    printf("[jb] compile %s\n", source);
+    JB_LOG("compile %s\n", source);
 
     const char *_arch = _jb_arch_string(tc->triple.arch);
     const char *_vendor = _jb_vendor_string(tc->triple.vendor);
@@ -1023,7 +1145,7 @@ void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, con
     if (!needs_build)
         return;
 
-    printf("[jb] compile %s\n", source);
+    JB_LOG("compile %s\n", source);
 
     const char *_arch = _jb_arch_string(tc->triple.arch);
     const char *_vendor = _jb_vendor_string(tc->triple.vendor);
@@ -1142,7 +1264,7 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
 
     char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
 
-    printf("[jb] link %s\n", output_exec);
+    JB_LOG("link %s\n", output_exec);
 
     JBVector(char *) cmd = {0};
 

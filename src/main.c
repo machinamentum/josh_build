@@ -44,6 +44,9 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    // Disable logging to a file; we expect to generate nearly 0 text in the driver anyways
+    _jb_log_print_only = 1;
+
     if (strcmp(argv[1], "build") == 0) {
 
         const char *name = "build.josh";
