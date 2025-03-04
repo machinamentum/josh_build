@@ -287,7 +287,30 @@ static inline void jb_vector_push(JBVectorGeneric *vec, void *src, int tsize) {
 
 #define JB_FAIL(msg, ...) do { printf(msg "\n" __VA_OPT__(,) __VA_ARGS__); exit(1); } while(0)
 
-#define JB_ASSERT(cond, msg, ...) if (!(cond)) JB_FAIL(msg, __VA_ARGS__);
+#define JB_ASSERT(cond, msg, ...) if (!(cond)) JB_FAIL(msg, __VA_ARGS__)
+
+typedef struct {
+    char *mem;
+    size_t allocated;
+    size_t current;
+} JBArena;
+
+void jb_arena_init(JBArena *arena, size_t size);
+void *jb_arena_alloc(JBArena *arena, size_t amt, size_t alignment);
+
+typedef struct {
+    JBVector(JBArena) arenas;
+} JBStringBuilder;
+
+void jb_sb_init(JBStringBuilder *sb);
+void jb_sb_free(JBStringBuilder *sb);
+void jb_sb_putchar(JBStringBuilder *sb, int c);
+void jb_sb_puts(JBStringBuilder *sb, const char *s);
+char *jb_sb_to_string(JBStringBuilder *sb);
+
+int jb_iswhitespace(int c);
+int jb_isalpha(int c);
+int jb_isalphanumeric(int c);
 
 #ifdef JOSH_BUILD_IMPL
 
@@ -564,6 +587,15 @@ int jb_iswhitespace(int c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v';
 }
 
+int jb_isalpha(int c) {
+    c |= 0x20;
+    return c >= 'a' && c <= 'z';
+}
+
+int jb_isalphanumeric(int c) {
+    return jb_isalpha(c) || (c >= '0' && c <= '9');
+}
+
 void jb_run_string(const char *cmd, char *const extra[], const char *file, int line) {
     JBVector(char *) args = {0};
 
@@ -592,6 +624,48 @@ void jb_run_string(const char *cmd, char *const extra[], const char *file, int l
             start = end;
         }
     }
+
+    JBStringBuilder sb;
+    jb_sb_init(&sb);
+
+    JBArrayFor(&args) {
+        char *start = args.data[index];
+        char *input = start;
+
+        while (*input) {
+            if (*input == '$') {
+                input += 1;
+                char *env_start = input;
+
+                while (*input && jb_isalphanumeric(*input)) {
+                    input += 1;
+                }
+
+                char *env = jb_format_string("%.*s", input-env_start, env_start);
+
+                char *value = getenv(env);
+
+                while (value && *value) {
+                    jb_sb_putchar(&sb, *value);
+                    value += 1;
+                }
+
+                free(env);
+                continue;
+            }
+
+            jb_sb_putchar(&sb, *input);
+            input += 1;
+        }
+
+        free(start);
+        args.data[index] = jb_sb_to_string(&sb);
+
+        jb_sb_free(&sb);
+        jb_sb_init(&sb);
+    }
+
+    jb_sb_free(&sb);
 
     size_t allocated_end = args.count;
 
@@ -1450,6 +1524,107 @@ void jb_generate_embed(const char *input, const char *output) {
     fputc('\n', out);
 
     fclose(out);
+}
+
+void jb_arena_init(JBArena *arena, size_t size) {
+    arena->mem = (char *)malloc(size);
+    arena->allocated = size;
+    arena->current = 0;
+}
+
+size_t _jb_pad_to_alignment(size_t value, size_t align) {
+    size_t mask = align-1;
+    size_t alignment = (align - (value & mask) & mask);
+
+    return value + alignment;
+}
+
+void *jb_arena_alloc(JBArena *arena, size_t amt, size_t alignment) {
+
+    size_t offset = _jb_pad_to_alignment(arena->current, alignment);
+
+    size_t next = offset + amt;
+
+    if (next > arena->allocated || offset >= arena->allocated)
+        return NULL;
+
+    char *ptr = arena->mem + offset;
+    arena->current = next;
+    return ptr;
+}
+
+JBArena *_jb_sb_new_arena(JBStringBuilder *sb, size_t size) {
+    JBArena tmp;
+    jb_arena_init(&tmp, (size < 4096) ? 4096 : size);
+    JBVectorPush(&sb->arenas, tmp);
+
+    return &sb->arenas.data[sb->arenas.count-1];
+}
+
+void jb_sb_init(JBStringBuilder *sb) {
+    memset(sb, 0, sizeof(JBStringBuilder));
+
+    _jb_sb_new_arena(sb, 4096);
+}
+
+void jb_sb_free(JBStringBuilder *sb) {
+    JBArrayForEach(&sb->arenas) {
+        free(it->mem);
+    }
+
+    free(sb->arenas.data);
+}
+
+
+void jb_sb_putchar(JBStringBuilder *sb, int c) {
+    JBArena *arena = &sb->arenas.data[sb->arenas.count-1];
+
+    char *out = jb_arena_alloc(arena, 1, 1);
+
+    if (!out) {
+        arena = _jb_sb_new_arena(sb, 1);
+        out = jb_arena_alloc(arena, 1, 1);
+
+        if (!out)
+            return;
+    }
+
+    *out = c;
+}
+
+void jb_sb_puts(JBStringBuilder *sb, const char *s) {
+    JBArena *arena = &sb->arenas.data[sb->arenas.count-1];
+
+    char *out = jb_arena_alloc(arena, strlen(s), 1);
+
+    if (!out) {
+        arena = _jb_sb_new_arena(sb, strlen(out));
+        out = jb_arena_alloc(arena, strlen(s), 1);
+
+        if (!out)
+            return;
+    }
+
+    memcpy(out, s, strlen(s));
+}
+
+char *jb_sb_to_string(JBStringBuilder *sb) {
+    size_t total = 1; // +1 for null byte
+
+    JBArrayForEach(&sb->arenas) {
+        total += it->current;
+    }
+
+    char *out = (char *)malloc(total);
+    size_t off = 0;
+
+    JBArrayForEach(&sb->arenas) {
+        memcpy(out + off, it->mem, it->current);
+    }
+
+    out[total-1] = 0;
+
+    return out;
 }
 
 #endif // JOSH_BUILD_IMPL
