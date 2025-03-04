@@ -1367,25 +1367,33 @@ char *jb_getcwd() {
     return NULL;
 }
 
-time_t jb_get_last_mod_time(const char *path) {
+struct timespec jb_get_last_mod_time(const char *path) {
     if (!jb_file_exists(path))
-        return 0;
+        return (struct timespec){0};
 
     // TODO maybe JB_FAIL on failure ?
     struct stat st;
     stat(path, &st);
 
-    return st.st_mtime;
+#if JB_IS_MACOS
+    return st.st_mtimespec;
+#else
+    return st.st_mtim;
+#endif
 }
 
 int jb_file_is_newer(const char *source, const char *dest) {
 
     JB_ASSERT(jb_file_exists(source), "file not found: %s", source);
 
-    time_t s = jb_get_last_mod_time(source);
-    time_t d = jb_get_last_mod_time(dest);
+    struct timespec s = jb_get_last_mod_time(source);
+    struct timespec d = jb_get_last_mod_time(dest);
 
-    return s > d;
+    if (s.tv_sec == d.tv_sec) {
+        return s.tv_nsec > d.tv_nsec;
+    }
+
+    return s.tv_sec > d.tv_sec;
 }
 
 const char *_jb_toolchain_dir = "toolchains";
