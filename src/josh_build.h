@@ -518,6 +518,13 @@ char *jb_run_get_output(char *const argv[], const char *file, int line) {
         // close write pipe
         close(pipefd[1]);
 
+        JBStringBuilder sb;
+        jb_sb_init(&sb);
+
+        const size_t buffer_size = 4096;
+        char buffer[buffer_size];
+        memset(buffer, 0, buffer_size);
+
         int wstatus;
         pid_t w;
 
@@ -531,27 +538,21 @@ char *jb_run_get_output(char *const argv[], const char *file, int line) {
 
         } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
 
-        size_t buffer_size = 4096*16;
-        char *buffer = malloc(buffer_size);
-        memset(buffer, 0, buffer_size);
-        size_t off = 0;
-
         do {
-            ssize_t bytes = read(pipefd[0], buffer+off, buffer_size-off);
+            ssize_t bytes = read(pipefd[0], buffer, buffer_size-1);
 
             if (bytes == 0)
                 break;
 
-            if (bytes > 0)
-                off += bytes;
+            if (bytes > 0) {
+                buffer[buffer_size-1] = 0;
+                jb_sb_puts(&sb, buffer);
+            }
 
-            if (off > buffer_size)
-                break;
         } while (errno == EAGAIN);
 
-        JB_ASSERT(buffer_size > off, "ran out of space when capturing command output");
-
-        buffer[off] = 0;
+        char *output = jb_sb_to_string(&sb);
+        jb_sb_free(&sb);
 
         if (WIFSIGNALED(wstatus)) {
             puts(buffer);
@@ -565,7 +566,7 @@ char *jb_run_get_output(char *const argv[], const char *file, int line) {
             exit(1);
         }
 
-        return buffer;
+        return output;
     }
     else {
         // child
