@@ -187,7 +187,7 @@ void jb_generate_embed(const char *input_file, const char *output_file);
 
 char *jb_getcwd();
 
-time_t jb_get_last_mod_time(const char *path);
+struct timespec jb_get_last_mod_time(const char *path);
 
 // Return 1 if source-file was last modified after dest-file.
 // Fails if source doesnt exist.
@@ -545,7 +545,7 @@ char *jb_run_get_output(char *const argv[], const char *file, int line) {
                 break;
 
             if (bytes > 0) {
-                buffer[buffer_size-1] = 0;
+                buffer[bytes] = 0;
                 jb_sb_puts(&sb, buffer);
             }
 
