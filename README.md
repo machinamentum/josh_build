@@ -25,6 +25,30 @@ Run `./bootstrap.sh` to build the `josh` driver. For fun, `./build/josh build` w
 
 Run `josh init` in an empty folder to create a template project. This creates a new `build.josh` and `src/main.c`. Run `josh build` to build the project template.
 
+### Running External Commands
+
+`JB_RUN(cmd, ...)` (and `jb_run_string(const char *cmd, const char *extra[])`) will transform `cmd` tokens into a string, then parse the string into its individual arguments to then feed to `jb_run(char *const argv[])`. The va-list/`extras` may be used to provide additional arguments as C strings that can't be described at compile-time or requires a comma be used.
+
+Example:
+```
+JB_RUN(echo Hello World!)
+JB_RUN(echo, "Hello, World!");
+```
+Output:
+```
+Hello World!
+Hello, World!
+```
+
+`JB_RUN()` and `jb_run_string()` additionally parse bash-style environment variable syntax and inject the environment variable value into the command:
+```
+JB_RUN(echo Hello $USER);
+```
+Output:
+```
+Hello josh
+```
+
 ### Cross-compiling
 
 Set `JBExecutable.toolchain` to instruct josh build to cross-compile. Find a target toolchain via `jb_find_toolchain()`.
