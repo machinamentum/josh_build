@@ -433,6 +433,7 @@ void josh_build(const char *path, char *args[]) {
     fputc('\n', out);
 
     {
+        fputs("#ifdef JOSH_BUILD_IMPL\n", out);
         fputs("const char _jb_josh_build_src[] = {\n", out);
 
         const char *text = _jb_josh_build_src;
@@ -446,6 +447,7 @@ void josh_build(const char *path, char *args[]) {
         fputs("\n    , 0\n", out);
 
         fputs("};\n", out);
+        fputs("#endif // JOSH_BUILD_IMPL\n", out);
     }
 
     fputs("#line 1 \"build.josh.c\"\n", out);

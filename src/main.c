@@ -108,6 +108,7 @@ int main(int argc, char *argv[]) {
 
     if (strcmp(argv[1], "library") == 0) {
         puts(_jb_josh_build_src);
+        puts("#ifdef JOSH_BUILD_IMPL\n");
         puts("const char _jb_josh_build_src[] = {\n");
 
         const char *text = _jb_josh_build_src;
@@ -121,6 +122,7 @@ int main(int argc, char *argv[]) {
         puts("\n    , 0\n");
 
         puts("};\n");
+        puts("#endif // JOSH_BUILD_IMPL\n");
         return 0;
     }
 
