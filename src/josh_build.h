@@ -907,12 +907,13 @@ const char *jb_extension(const char *path) {
 
 const char *_jb_arch_string(enum JBArch arch) {
     switch (arch) {
-    case JB_ENUM(INVALID_ARCH):
-        return NULL;
     case JB_ENUM(X86_64):
         return "x86_64";
     case JB_ENUM(ARM64):
         return "arm64";
+    case JB_ENUM(INVALID_ARCH):
+    default:
+        return NULL;
     }
 }
 
@@ -929,14 +930,15 @@ enum JBArch _jb_arch(const char *str) {
 
 const char *_jb_vendor_string(enum JBVendor vendor) {
     switch (vendor) {
-    case JB_ENUM(INVALID_VENDOR):
-        return NULL;
     case JB_ENUM(Apple):
         return "apple";
     case JB_ENUM(Linux):
         return "linux";
     case JB_ENUM(Windows):
         return "windows";
+    case JB_ENUM(INVALID_VENDOR):
+    default:
+        return NULL;
     }
 }
 
@@ -953,14 +955,15 @@ enum JBVendor _jb_vendor(const char *str) {
 
 const char *_jb_runtime_string(enum JBRuntime runtime) {
     switch (runtime) {
-    case JB_ENUM(INVALID_RUNTIME):
-        return NULL;
     case JB_ENUM(Darwin):
         return "darwin";
     case JB_ENUM(Linux):
         return "gnu";
     case JB_ENUM(Windows):
         return "msvc";
+    case JB_ENUM(INVALID_RUNTIME):
+    default:
+        return NULL;
     }
 }
 
@@ -1655,7 +1658,7 @@ void jb_arena_init(JBArena *arena, size_t size) {
 
 size_t _jb_pad_to_alignment(size_t value, size_t align) {
     size_t mask = align-1;
-    size_t alignment = (align - (value & mask) & mask);
+    size_t alignment = ((align - (value & mask)) & mask);
 
     return value + alignment;
 }
