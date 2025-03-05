@@ -20,6 +20,9 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    const char **sources = JB_STRING_ARRAY("src/main.c");
+    const char **cflags = JB_STRING_ARRAY("-Wall");
+
     {
         jb_generate_embed("src/josh_build.h", "src/josh_build_embed.h");
         jb_generate_embed("src/init_josh_build.c", "src/init_josh_build_embed.h");
@@ -28,7 +31,8 @@ int main(int argc, char *argv[]) {
 
     {
         JBExecutable josh = {"josh"};
-        josh.sources = (const char *[]){"src/main.c", NULL};
+        josh.sources = sources;
+        josh.cflags = cflags;
         josh.build_folder = "build";
         jb_build_exe(&josh);
     }
@@ -41,7 +45,8 @@ int main(int argc, char *argv[]) {
         else {
             // Cross build linux executable
             JBExecutable josh = {"josh_linux"};
-            josh.sources = (const char *[]){"src/main.c", NULL};
+            josh.sources = sources;
+            josh.cflags = cflags;
             josh.build_folder = "build_linux";
 
             josh.toolchain = toolchain;

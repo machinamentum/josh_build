@@ -1340,12 +1340,6 @@ void jb_build_exe(JBExecutable *exec) {
         jb_build_lib(lib);
     }
 
-    const char *_arch = _jb_arch_string(tc->triple.arch);
-    const char *_vendor = _jb_vendor_string(tc->triple.vendor);
-    const char *_runtime = _jb_runtime_string(tc->triple.runtime);
-
-    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
-
     _jb_init_build(exec->build_folder, object_folder);
 
     char **object_files = _jb_collect_objects(tc, object_folder, exec->sources, exec->cflags, exec->cxxflags);
@@ -1423,12 +1417,6 @@ void jb_build_lib(JBLibrary *target) {
         // TODO link directly against library objects to save some steps
         jb_build_lib(lib);
     }
-
-    const char *_arch = _jb_arch_string(tc->triple.arch);
-    const char *_vendor = _jb_vendor_string(tc->triple.vendor);
-    const char *_runtime = _jb_runtime_string(tc->triple.runtime);
-
-    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
 
     _jb_init_build(target->build_folder, object_folder);
 
