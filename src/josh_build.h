@@ -312,6 +312,7 @@ char *jb_sb_to_string(JBStringBuilder *sb);
 
 int jb_iswhitespace(int c);
 int jb_isalpha(int c);
+int jb_isnumber(int c);
 int jb_isalphanumeric(int c);
 
 void jb_log_set_file(const char *path);
@@ -330,6 +331,12 @@ void jb_log_print(const char *fmt, ...);
 #include <fcntl.h>
 #include <poll.h>
 
+#if JB_IS_MACOS
+#include <util.h>
+#else
+#include <pty.h>
+#endif
+
 #include <sys/wait.h>
 #include <sys/param.h>
 #include <sys/stat.h>
@@ -338,6 +345,11 @@ void jb_log_print(const char *fmt, ...);
 int _jb_log_print_only = 0;
 int _jb_verbose_show_commands = 0;
 int _jb_log_fd = -1;
+
+// experimental: enable/disable psuedo-terminal mode;
+// performs additional filtering when writing to log file to remove control sequences
+// enables pretty, colored text in terminal output.
+int _jb_use_pty = 1;
 
 void jb_log_set_file(const char *path) {
     int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0777);
@@ -366,7 +378,104 @@ void jb_va_log(const char *fmt, va_list args) {
 
     char *out = jb_va_format_string(fmt, args);
 
-    write(_jb_log_fd, out, strlen(out));
+    if (_jb_use_pty) {
+        char *filtered = malloc(strlen(out)+1);
+        size_t bytes = 0;
+
+        // General escape codes
+        // https://gist.github.com/machinamentum/b20cb3fbe4b4afa62fc9f6ffaba821e3
+
+        // hyperlink OSC
+        // https://gist.github.com/machinamentum/184f4f073924972325a6a0e2d63bdd2a
+        const char ESC = '\x1b';
+        const char BEL = '\x07';
+        char *c = out;
+        while (*c) {
+            if (*c == ESC) {
+                c += 1;
+
+                if (*c == ']') {
+                    c += 1;
+
+                    if (*c == '8')
+                        c += 1;
+
+                    if (*c == ';')
+                        c += 1;
+
+                    while (*c && *c != ';')
+                        c += 1;
+
+                    if (*c == ';')
+                        c += 1;
+
+                    // find ST or BEL
+                    while (*c && (*c != BEL)) {
+                        if (*c == ESC && *(c+1) == '\\') {
+                            c += 1;
+                            break;
+                        }
+
+                        c += 1;
+                    }
+
+                    if (*c)
+                        c += 1;
+
+                    while (*c && *c != ESC) {
+                        filtered[bytes] = *c;
+                        c += 1;
+                        bytes += 1;
+                    }
+
+                    if (*c)
+                        c += 1;
+
+                    if (*c == ']')
+                        c += 1;
+
+                    if (*c == '8')
+                        c += 1;
+
+                    if (*c == ';')
+                        c += 1;
+
+                    if (*c == ';')
+                        c += 1;
+
+                    if (*c == BEL)
+                        c += 1;
+                    else if (*c == ESC && *(c+1) == '\\')
+                        c += 2;
+
+                    continue;
+                }
+
+                if (*c == '[')
+                    c += 1;
+
+                while (*c && !jb_isalpha(*c)) {
+                    c += 1;
+                }
+
+                if (*c)
+                    c += 1;
+            }
+            else {
+                filtered[bytes] = *c;
+                c += 1;
+                bytes += 1;
+            }
+        }
+
+        write(_jb_log_fd, filtered, bytes);
+        free(filtered);
+    }
+    else {
+        write(_jb_log_fd, out, strlen(out));
+        free(out);
+    }
+
     fsync(_jb_log_fd);
 }
 
@@ -584,13 +693,16 @@ int _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_f
     // fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
     // fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
 
-    pid_t pid = fork();
+    int pty = _jb_use_pty;
+    pid_t pid = pty ? forkpty(&pipefd[0], NULL, NULL, NULL) : fork();
     JB_ASSERT(pid >= 0, "could not fork() process to execute %s\n", argv[0]);
+
     if (pid) {
         // parent
 
         // close write pipe
-        close(pipefd[1]);
+        if (!pty)
+            close(pipefd[1]);
 
         int wstatus;
         pid_t w;
@@ -633,12 +745,14 @@ int _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_f
     else {
         // child
 
-        // close read pipe
-        close(pipefd[0]);
+        if (!pty) {
+            // close read pipe
+            close(pipefd[0]);
 
-        // Map stdout and stderr to the pipe
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
+            // Map stdout and stderr to the pipe
+            dup2(pipefd[1], STDOUT_FILENO);
+            dup2(pipefd[1], STDERR_FILENO);
+        }
 
         execvp(argv[0], argv);
         jb_log_print("Could not run %s\n", argv[0]);
@@ -679,8 +793,12 @@ int jb_isalpha(int c) {
     return c >= 'a' && c <= 'z';
 }
 
+int jb_isnumber(int c) {
+    return c >= '0' && c <= '9';
+}
+
 int jb_isalphanumeric(int c) {
-    return jb_isalpha(c) || (c >= '0' && c <= '9');
+    return jb_isalpha(c) || jb_isnumber(c);
 }
 
 void jb_run_string(const char *cmd, char *const extra[], const char *file, int line) {
