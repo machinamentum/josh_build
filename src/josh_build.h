@@ -349,7 +349,7 @@ int _jb_log_fd = -1;
 // experimental: enable/disable psuedo-terminal mode;
 // performs additional filtering when writing to log file to remove control sequences
 // enables pretty, colored text in terminal output.
-int _jb_use_pty = 0;
+int _jb_use_pty = 1;
 
 void jb_log_set_file(const char *path) {
     int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0777);
@@ -669,7 +669,7 @@ void _jb_drain_pipe(int fd, void *context, _JBDrainPipeFn fn) {
     while (_jb_pipe_read_would_not_block(fd)) {
         ssize_t bytes = read(fd, buffer, buffer_size-1);
 
-        if (bytes == 0)
+        if (bytes <= 0)
             break;
 
         if (bytes > 0) {
