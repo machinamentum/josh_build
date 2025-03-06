@@ -688,12 +688,14 @@ int _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_f
         jb_log_print("\n");
     }
 
+    int pty = _jb_use_pty;
+
     int pipefd[2];
-    JB_ASSERT(pipe(pipefd) == 0, "could not open pipe");
+    if (!pty)
+        JB_ASSERT(pipe(pipefd) == 0, "could not open pipe");
+
     // fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
     // fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
-
-    int pty = _jb_use_pty;
     pid_t pid = pty ? forkpty(&pipefd[0], NULL, NULL, NULL) : fork();
     JB_ASSERT(pid >= 0, "could not fork() process to execute %s\n", argv[0]);
 
