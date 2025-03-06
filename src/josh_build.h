@@ -328,6 +328,7 @@ void jb_log_print(const char *fmt, ...);
 #include <unistd.h>
 
 #include <fcntl.h>
+ #include <poll.h>
 
 #include <sys/wait.h>
 #include <sys/param.h>
@@ -521,8 +522,45 @@ char **josh_parse_arguments(int argc, char *argv[]) {
     return out.data;
 }
 
-void jb_run(char *const argv[], const char *file, int line) {
+typedef void (*_JBDrainPipeFn)(void *ctx, const char *str);
 
+void _jb_pipe_drain_log_proxy(void *context, const char *str) {
+    jb_log_print("%s", str);
+}
+
+void _jb_pipe_drain_sb_proxy(void *context, const char *str) {
+    jb_sb_puts((JBStringBuilder *)context, str);
+}
+
+void _jb_drain_pipe(int fd, void *context, _JBDrainPipeFn fn) {
+    const size_t buffer_size = 4096*2;
+    char buffer[buffer_size];
+    // memset(buffer, 0, buffer_size);
+
+    struct pollfd pfd = { .fd = fd, .events = POLLIN };
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+
+    int result = poll(&pfd, 1, 0);
+    while (result > 0) {
+        if (pfd.revents & (POLLERR | POLLNVAL))
+            break;
+
+        ssize_t bytes = read(fd, buffer, buffer_size-1);
+
+        if (bytes == 0)
+            break;
+
+        if (bytes > 0) {
+            buffer[bytes] = 0;
+            fn(context, buffer);
+        }
+
+        result = poll(&pfd, 1, 0);
+    }
+}
+
+void _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_fn, const char *file, int line) {
     if (_jb_verbose_show_commands) {
         JBNullArrayFor(argv) {
             jb_log_print("%s ", argv[index]);
@@ -532,11 +570,12 @@ void jb_run(char *const argv[], const char *file, int line) {
     }
 
     int pipefd[2];
-    pipe(pipefd);
-    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
-    fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
+    JB_ASSERT(pipe(pipefd) == 0, "could not open pipe");
+    // fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    // fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
 
     pid_t pid = fork();
+    JB_ASSERT(pid >= 0, "could not fork() process to execute %s\n", argv[0]);
     if (pid) {
         // parent
 
@@ -545,46 +584,22 @@ void jb_run(char *const argv[], const char *file, int line) {
 
         int wstatus;
         pid_t w;
-
-        const size_t buffer_size = 4096;
-        char buffer[buffer_size];
-        memset(buffer, 0, buffer_size);
-
+        
         do {
+
             w = waitpid(pid, &wstatus, 0);
 
             if (w == -1) {
                 jb_log_print("WAIT FAILED\n");
+                // JB_FAIL("wait failed");
                 return;
             }
 
-            do {
-                ssize_t bytes = read(pipefd[0], buffer, buffer_size-1);
-
-                if (bytes == 0)
-                    break;
-
-                if (bytes > 0) {
-                    buffer[bytes] = 0;
-                    jb_log_print("%s", buffer);
-                }
-
-            } while (errno == EAGAIN);
+            _jb_drain_pipe(pipefd[0], print_ctx, print_fn);
 
         } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
 
-        do {
-            ssize_t bytes = read(pipefd[0], buffer, buffer_size-1);
-
-            if (bytes == 0)
-                break;
-
-            if (bytes > 0) {
-                buffer[bytes] = 0;
-                jb_log_print("%s", buffer);
-            }
-
-        } while (errno == EAGAIN);
+        _jb_drain_pipe(pipefd[0], print_ctx, print_fn);
 
         if (WIFSIGNALED(wstatus)) {
             jb_log_print("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
@@ -595,6 +610,8 @@ void jb_run(char *const argv[], const char *file, int line) {
             jb_log_print("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
             exit(1);
         }
+
+        close(pipefd[0]);
     }
     else {
         // child
@@ -612,92 +629,20 @@ void jb_run(char *const argv[], const char *file, int line) {
     }
 }
 
+void jb_run(char *const argv[], const char *file, int line) {
+    _jb_run_internal(argv, NULL, _jb_pipe_drain_log_proxy, file, line);
+}
+
 char *jb_run_get_output(char *const argv[], const char *file, int line) {
 
-    if (_jb_verbose_show_commands) {
-        JBNullArrayFor(argv) {
-            jb_log_print("%s ", argv[index]);
-        }
+    JBStringBuilder sb;
+    jb_sb_init(&sb);
 
-        jb_log_print("\n");
-    }
+    _jb_run_internal(argv, &sb, _jb_pipe_drain_sb_proxy, file, line);
 
-    int pipefd[2];
-    pipe(pipefd);
-    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
-    fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
-
-    pid_t pid = fork();
-    if (pid) {
-        // parent
-
-        // close write pipe
-        close(pipefd[1]);
-
-        JBStringBuilder sb;
-        jb_sb_init(&sb);
-
-        const size_t buffer_size = 4096;
-        char buffer[buffer_size];
-        memset(buffer, 0, buffer_size);
-
-        int wstatus;
-        pid_t w;
-
-        do {
-            w = waitpid(pid, &wstatus, 0);
-
-            if (w == -1) {
-                jb_log_print("WAIT FAILED\n");
-                return NULL;
-            }
-
-        } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
-
-        do {
-            ssize_t bytes = read(pipefd[0], buffer, buffer_size-1);
-
-            if (bytes == 0)
-                break;
-
-            if (bytes > 0) {
-                buffer[bytes] = 0;
-                jb_sb_puts(&sb, buffer);
-            }
-
-        } while (errno == EAGAIN);
-
-        char *output = jb_sb_to_string(&sb);
-        jb_sb_free(&sb);
-
-        if (WIFSIGNALED(wstatus)) {
-            puts(buffer);
-            jb_log_print("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
-            exit(1);
-        }
-
-        if (WEXITSTATUS(wstatus) != 0) {
-            puts(buffer);
-            jb_log_print("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
-            exit(1);
-        }
-
-        return output;
-    }
-    else {
-        // child
-
-        // close read pipe
-        close(pipefd[0]);
-
-        // Map stdout and stderr to the pipe
-        dup2(pipefd[1], STDERR_FILENO);
-        dup2(pipefd[1], STDOUT_FILENO);
-
-        execvp(argv[0], argv);
-        jb_log_print("Could not run %s\n", argv[0]);
-        exit(1);
-    }
+    char *output = jb_sb_to_string(&sb);
+    jb_sb_free(&sb);
+    return output;
 }
 
 int jb_iswhitespace(int c) {
