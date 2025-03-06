@@ -18,6 +18,8 @@
 
 #undef linux // we use the linux identifier token to build strings
 
+#include "build_environment.h"
+
 // #define TARGET_ARCHS "X86;AArch64;ARM;AVR;Mips;WebAssembly"
 #define TARGET_ARCHS X86;AArch64;ARM
 #define LLVM_RUNTIME_TARGETS "aarch64-linux-gnu"
@@ -57,45 +59,11 @@ if (!jb_file_exists(STR(lib-version))) UNTAR(ARCHIVE(lib-version.tar.COMPRESSION
 DOWNLOAD_GENERIC(STR(lib-version.tar.COMPRESSION), STR(GNU_LINK/lib/lib-version/lib-version.tar.COMPRESSION)); \
 if (!jb_file_exists(STR(lib-version))) UNTAR(ARCHIVE(lib-version.tar.COMPRESSION))
 
-#define DOWNLOAD_AND_EXTRACT_GENERIC(lib, version, link) \
-DOWNLOAD_GENERIC(STR(lib-version.tar.COMPRESSION), STR(link)); \
-if (!jb_file_exists(STR(lib-version))) UNTAR(ARCHIVE(lib-version.tar.COMPRESSION))
-
-#define DOWNLOAD_GENERIC(name, link) \
-if (!jb_file_exists(ARCHIVE_STRING(name))) CURL(link, ARCHIVE_STRING(name))
-
-#define CURL(link, path) JB_RUN_CMD("curl", link, "--output", path)
-#define UNTAR(path) JB_RUN_CMD("tar", "-xf", path)
-
-#define XSTR(x) #x
-#define STR(x) XSTR(x)
-
-#define LIST(...) __VA_ARGS__
-
-#define WORKSPACE PATH(context.root, toolchain-build)
-#define ROOT context.root
-#define TOOLCHAIN(...) PATH(ROOT, toolchains/__VA_ARGS__)
-#define TOOLCHAIN_TARGET(target, tokens) FMT("%s%s/%s", TOOLCHAIN(), target, STR(tokens))
-
-#define NATIVE_TOOLS(tokens) PATH(WORKSPACE, native-tools/tokens)
-#define NATIVE_TOOLS_STRING(string) FMT("%s/native-tools/%s", WORKSPACE, string)
-#define NATIVE_BUILD   PATH(WORKSPACE, native-build)
-
-#define ARCHIVE_STRING(string) FMT("%s/archive/%s", WORKSPACE, string)
-#define ARCHIVE(tokens) PATH(WORKSPACE, archive/tokens)
-
-#define TARGET_BUILD(tokens) PATH(WORKSPACE, target-build/tokens)
-
 #if JB_IS_MACOS
 #define MACOS_SYS_ROOT --with-sysroot=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
 #else
 #define MACOS_SYS_ROOT
 #endif
-
-#define mkdir(dir) JB_RUN(mkdir -p, dir)
-#define PATH(var, tokens) jb_concat(var, "/" #tokens)
-
-#define FMT(fmt, ...) jb_format_string(fmt, __VA_ARGS__)
 
 #define SYS_ROOT sys-root
 
@@ -483,6 +451,9 @@ int main(int argc, char *argv[]) {
         usage();
         return 1;
     }
+
+    //  Set log file early so that it doesn't end up in one of the workspace folders
+    jb_log_set_file("toolchain-build.log");
 
     context.root = jb_getcwd();
 
