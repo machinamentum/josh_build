@@ -383,6 +383,10 @@ void jb_log_print(const char *fmt, ...) {
         va_start(args, fmt);
         vprintf(fmt, args);
         va_end(args);
+        // Required in the event that we are running in a josh_builder; since our parent process would be a .josh, printf will not flush stdout since
+        // we are not writing to a tty. We could use forkpty() instead of fork() in _jb_run_internal but that may have additional performance overhead
+        // to measure and consider.
+        fflush(stdout);
     }
 
     {
@@ -532,20 +536,28 @@ void _jb_pipe_drain_sb_proxy(void *context, const char *str) {
     jb_sb_puts((JBStringBuilder *)context, str);
 }
 
-void _jb_drain_pipe(int fd, void *context, _JBDrainPipeFn fn) {
-    const size_t buffer_size = 4096*2;
-    char buffer[buffer_size];
-    // memset(buffer, 0, buffer_size);
-
+int _jb_pipe_read_would_not_block(int fd) {
     struct pollfd pfd = { .fd = fd, .events = POLLIN };
     pfd.fd = fd;
     pfd.events = POLLIN;
 
     int result = poll(&pfd, 1, 0);
-    while (result > 0) {
-        if (pfd.revents & (POLLERR | POLLNVAL))
-            break;
+    return result > 0 && (pfd.revents & (POLLERR | POLLNVAL)) == 0;
+}
 
+int _jb_pipe_has_data(int fd) {
+    if (!_jb_pipe_read_would_not_block(fd))
+        return 0;
+
+    char c;
+    return read(fd, &c, 1) > 0;
+}
+
+void _jb_drain_pipe(int fd, void *context, _JBDrainPipeFn fn) {
+    const size_t buffer_size = 4096*2;
+    char buffer[buffer_size];
+
+    while (_jb_pipe_read_would_not_block(fd)) {
         ssize_t bytes = read(fd, buffer, buffer_size-1);
 
         if (bytes == 0)
@@ -555,8 +567,6 @@ void _jb_drain_pipe(int fd, void *context, _JBDrainPipeFn fn) {
             buffer[bytes] = 0;
             fn(context, buffer);
         }
-
-        result = poll(&pfd, 1, 0);
     }
 }
 
@@ -585,21 +595,26 @@ void _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_
         int wstatus;
         pid_t w;
         
+        errno = 0;
         do {
 
-            w = waitpid(pid, &wstatus, 0);
+            w = waitpid(pid, &wstatus, WNOHANG);
 
             if (w == -1) {
-                jb_log_print("WAIT FAILED\n");
+                jb_log_print("WAIT FAILED %s\n", strerror(errno));
                 // JB_FAIL("wait failed");
                 return;
             }
 
             _jb_drain_pipe(pipefd[0], print_ctx, print_fn);
 
-        } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
+            // skip status checks if 0 because the child hasn't changed state.
+            if (w > 0 && (WIFEXITED(wstatus) || WIFSIGNALED(wstatus)))
+                break;
 
-        _jb_drain_pipe(pipefd[0], print_ctx, print_fn);
+        } while (1);
+
+        JB_ASSERT(!_jb_pipe_has_data(pipefd[0]), "data still in pipe");
 
         if (WIFSIGNALED(wstatus)) {
             jb_log_print("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
