@@ -328,7 +328,7 @@ void jb_log_print(const char *fmt, ...);
 #include <unistd.h>
 
 #include <fcntl.h>
- #include <poll.h>
+#include <poll.h>
 
 #include <sys/wait.h>
 #include <sys/param.h>
@@ -570,7 +570,7 @@ void _jb_drain_pipe(int fd, void *context, _JBDrainPipeFn fn) {
     }
 }
 
-void _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_fn, const char *file, int line) {
+int _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_fn, const char *file, int line) {
     if (_jb_verbose_show_commands) {
         JBNullArrayFor(argv) {
             jb_log_print("%s ", argv[index]);
@@ -603,7 +603,7 @@ void _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_
             if (w == -1) {
                 jb_log_print("WAIT FAILED %s\n", strerror(errno));
                 // JB_FAIL("wait failed");
-                return;
+                return 0;
             }
 
             _jb_drain_pipe(pipefd[0], print_ctx, print_fn);
@@ -616,17 +616,19 @@ void _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_
 
         JB_ASSERT(!_jb_pipe_has_data(pipefd[0]), "data still in pipe");
 
+        close(pipefd[0]);
+
         if (WIFSIGNALED(wstatus)) {
             jb_log_print("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
-            exit(1);
+            return 0;
         }
 
         if (WEXITSTATUS(wstatus) != 0) {
             jb_log_print("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
-            exit(1);
+            return 0;
         }
 
-        close(pipefd[0]);
+        return 1;
     }
     else {
         // child
@@ -645,17 +647,25 @@ void _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_
 }
 
 void jb_run(char *const argv[], const char *file, int line) {
-    _jb_run_internal(argv, NULL, _jb_pipe_drain_log_proxy, file, line);
+    int result = _jb_run_internal(argv, NULL, _jb_pipe_drain_log_proxy, file, line);
+
+    if (!result)
+        exit(1);
 }
 
 char *jb_run_get_output(char *const argv[], const char *file, int line) {
-
     JBStringBuilder sb;
     jb_sb_init(&sb);
 
-    _jb_run_internal(argv, &sb, _jb_pipe_drain_sb_proxy, file, line);
+    int result = _jb_run_internal(argv, &sb, _jb_pipe_drain_sb_proxy, file, line);
 
     char *output = jb_sb_to_string(&sb);
+
+    if (!result) {
+        jb_log_print("%s", output);
+        exit(1);
+    }
+
     jb_sb_free(&sb);
     return output;
 }
