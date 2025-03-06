@@ -4,11 +4,12 @@
 
 void usage() {
     printf("Usage: josh [tool] <args>\n");
-    printf("    build      : build build.josh file in current directory\n");
-    printf("    build-file : specify file path to josh build file to build\n");
-    printf("    cc         : invoke C compiler; use -target <triple> to use cross compiler\n");
-    printf("    init       : generate project template in current working directory\n");
-    printf("    library    : dump josh build header library\n");
+    printf("    build             : build build.josh file in current directory\n");
+    printf("    build-file        : specify file path to josh build file to build\n");
+    printf("    cc                : invoke C compiler; use -target <triple> to use cross compiler\n");
+    printf("    init              : generate project template in current working directory\n");
+    printf("    init-freestanding : generate a free-standing project template that can be built without the josh command.\n");
+    printf("    library           : dump josh build header library\n");
     printf("\n");
 }
 
@@ -36,6 +37,25 @@ void write_file(const char *path, const char *text) {
 
     fwrite(text, 1, strlen(text), f);
     fclose(f);
+}
+
+void dump_library(FILE *file) {
+    fputs(_jb_josh_build_src, file);
+    fputs("#ifdef JOSH_BUILD_IMPL\n", file);
+    fputs("const char _jb_josh_build_src[] = {\n", file);
+
+    const char *text = _jb_josh_build_src;
+    while (*text) {
+        fprintf(file, "0x%X", *text);
+
+        text += 1;
+        if (*text)
+            fputs(", ", file);
+    }
+    fputs("\n    , 0\n", file);
+
+    fputs("};\n", file);
+    fputs("#endif // JOSH_BUILD_IMPL\n", file);
 }
 
 int main(int argc, char *argv[]) {
@@ -106,23 +126,42 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    if (strcmp(argv[1], "library") == 0) {
-        puts(_jb_josh_build_src);
-        puts("#ifdef JOSH_BUILD_IMPL\n");
-        puts("const char _jb_josh_build_src[] = {\n");
+    if (strcmp(argv[1], "init-freestanding") == 0) {
+        JB_RUN(mkdir -p src);
 
-        const char *text = _jb_josh_build_src;
-        while (*text) {
-            printf("0x%X", *text);
+        if (jb_file_exists("build.josh"))
+            JB_FAIL("build.josh already exists. Aborting\n");
 
-            text += 1;
-            if (*text)
-                printf(", ");
+        {
+            FILE *file = fopen("build.josh", "wb");
+            if (file) {
+                fputs("#define JOSH_BUILD_IMPL\n#include \"josh_build.h\"\n", file);
+                fputs(josh_build_init_josh_build, file);
+
+                fclose(file);
+            }
         }
-        puts("\n    , 0\n");
 
-        puts("};\n");
-        puts("#endif // JOSH_BUILD_IMPL\n");
+        {
+            FILE *file = fopen("josh_build.h", "wb");
+            dump_library(file);
+            fclose(file);
+        }
+
+        {
+            write_file("build.sh", "mkdir -p build && gcc -o build/josh_builder -x c build.josh && ./build/josh_builder\n");
+            JB_RUN(chmod +x build.sh);
+        }
+
+        if (jb_file_exists("src/main.c"))
+            JB_FAIL("src/main.c already exists. Aborting\n");
+
+        write_file("src/main.c", josh_build_init_src_main);
+        return 0;
+    }
+
+    if (strcmp(argv[1], "library") == 0) {
+        dump_library(stdout);
         return 0;
     }
 
