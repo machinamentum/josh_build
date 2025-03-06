@@ -30,7 +30,7 @@
 #include <time.h>
 
 #define JB_IS_MACOS   0
-#define JB_IS_LUNIX   0
+#define JB_IS_LINUX   0
 #define JB_IS_WINDOWS 0
 
 #if __APPLE__
@@ -39,8 +39,8 @@
 #define JB_DEFAULT_VENDOR JB_ENUM(Apple)
 #define JB_DEFAULT_RUNTIME JB_ENUM(Darwin)
 #elif __linux__
-#undef  JB_IS_LUNIX
-#define JB_IS_LUNIX 1
+#undef  JB_IS_LINUX
+#define JB_IS_LINUX 1
 #define JB_DEFAULT_VENDOR JB_ENUM(Linux)
 #define JB_DEFAULT_RUNTIME JB_ENUM(GNU)
 #elif defined(WIN32)
