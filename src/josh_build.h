@@ -110,6 +110,7 @@ void jb_set_toolchain_directory(const char *path);
 JBToolchain *jb_native_toolchain();
 JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRuntime runtime);
 JBToolchain *jb_find_toolchain_by_triple(const char *triple);
+char *jb_get_triple(JBToolchain *toolchain);
 
 #define JB_LIBRARY_STATIC (0 << 0)
 #define JB_LIBRARY_SHARED (1 << 0)
@@ -1069,11 +1070,8 @@ enum JBRuntime _jb_runtime(const char *str) {
 }
 
 char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *source, const char **cflags) {
-    const char *_arch = _jb_arch_string(tc->triple.arch);
-    const char *_vendor = _jb_vendor_string(tc->triple.vendor);
-    const char *_runtime = _jb_runtime_string(tc->triple.runtime);
 
-    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
+    char *triplet = jb_get_triple(tc);
 
     JBVector(char *) cmd = {0};
 
@@ -1157,7 +1155,9 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *sou
 
 void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags) {
 
-    JB_ASSERT(tc->cc, "Toolchain missing C compiler");
+    char *triplet = jb_get_triple(tc);
+
+    JB_ASSERT(tc->cc, "Toolchain (%s) missing C compiler", triplet);
 
     char **deps = _jb_get_dependencies_c(tc, tc->cc, source, cflags);
 
@@ -1177,12 +1177,6 @@ void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const
         return;
 
     JB_LOG("compile %s\n", source);
-
-    const char *_arch = _jb_arch_string(tc->triple.arch);
-    const char *_vendor = _jb_vendor_string(tc->triple.vendor);
-    const char *_runtime = _jb_runtime_string(tc->triple.runtime);
-
-    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
 
     JBVector(char *) cmd = {0};
 
@@ -1221,7 +1215,9 @@ void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const
 
 void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, const char **cflags) {
 
-    JB_ASSERT(tc->cxx, "Toolchain missing C++ compiler");
+    char *triplet = jb_get_triple(tc);
+
+    JB_ASSERT(tc->cxx, "Toolchain (%s) missing C++ compiler", triplet);
 
     char **deps = _jb_get_dependencies_c(tc, tc->cxx, source, cflags);
 
@@ -1241,12 +1237,6 @@ void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, con
         return;
 
     JB_LOG("compile %s\n", source);
-
-    const char *_arch = _jb_arch_string(tc->triple.arch);
-    const char *_vendor = _jb_vendor_string(tc->triple.vendor);
-    const char *_runtime = _jb_runtime_string(tc->triple.runtime);
-
-    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
 
     JBVector(char *) cmd = {0};
 
@@ -1353,11 +1343,7 @@ int _jb_need_to_build_target(const char *target, char **object_files) {
 
 void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldflags, char *output_exec, char **object_files, JBLibrary **libs, int is_lib) {
 
-    const char *_arch = _jb_arch_string(tc->triple.arch);
-    const char *_vendor = _jb_vendor_string(tc->triple.vendor);
-    const char *_runtime = _jb_runtime_string(tc->triple.runtime);
-
-    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
+    char *triplet = jb_get_triple(tc);
 
     JB_LOG("link %s\n", output_exec);
 
@@ -1369,6 +1355,8 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
         JBVectorPush(&cmd, "-fuse-ld=lld");
     }
 
+    // TODO triplet is always non-NULL here now. Either we always specify the target triple, or we get smarter about
+    // wether toolchain is the system toolchain, or a cross-toolchain.
     if (triplet && strstr(link_command, "clang") != NULL) {
         JBVectorPush(&cmd, "-target");
         JBVectorPush(&cmd, triplet);
@@ -1528,8 +1516,8 @@ void jb_build_lib(JBLibrary *target) {
             _jb_link_shared(tc, link_command, target->ldflags, output_exec, object_files, target->libraries, 1);
         }
         else {
-
-            JB_ASSERT(tc->ar, "Toolchain missing AR");
+            char *triplet = jb_get_triple(tc);
+            JB_ASSERT(tc->ar, "Toolchain (%s) missing AR", triplet);
 
             JBVector(char *) cmd = {0};
 
@@ -1546,6 +1534,8 @@ void jb_build_lib(JBLibrary *target) {
             JBVectorPush(&cmd, NULL);
             jb_run(cmd.data, __FILE__, __LINE__);
             free(cmd.data);
+
+            free(triplet);
         }
     }
 
@@ -1716,6 +1706,15 @@ JBToolchain *jb_native_toolchain() {
 
     __jb_native_toolchain = tc;
     return &__jb_native_toolchain;
+}
+
+char *jb_get_triple(JBToolchain *toolchain) {
+    const char *_arch = _jb_arch_string(toolchain->triple.arch);
+    const char *_vendor = _jb_vendor_string(toolchain->triple.vendor);
+    const char *_runtime = _jb_runtime_string(toolchain->triple.runtime);
+
+    char *triple = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
+    return triple;
 }
 
 void jb_generate_embed(const char *input, const char *output) {
