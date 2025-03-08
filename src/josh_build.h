@@ -1111,8 +1111,10 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *sou
         return NULL;
 
     for (int i = 0; result[i]; i++) {
-        if (result[i] == '\\' && result[i+1] == '\n')
+        char n = result[i+1];
+        if (result[i] == '\\' && (n == '\r' || n == '\n')) {
             result[i] = ' ';
+        }
     }
 
     JBVector(char *) out = {0};
