@@ -405,7 +405,7 @@ void build_gcc(const char *target, int is_gnu, int is_freestanding) {
                 --enable-threads
                 --disable-nls,
                 is_gnu ? STR(--with-glibc-version=GLIBC_VERSION) : "",
-                is_freestanding ? "--disable-hosted-libstdcxx" : "",
+                is_freestanding ? "--disable-hosted-libstdcxx" : "", // needed to prevent libstdcxx from trying to look for C headers during configuration and build
                 FMT("--enable-languages=%s", GCC_LANGS),
                 !is_freestanding ? FMT("--with-sysroot=%s", TOOLCHAIN_TARGET(target, SYS_ROOT)) : "", // --with-sysroot overrides --without-headers
                 is_freestanding ? "--without-headers" : "",
@@ -416,7 +416,6 @@ void build_gcc(const char *target, int is_gnu, int is_freestanding) {
         if (is_freestanding) {
             JB_RUN(make -j4 all-gcc);
             JB_RUN(make all-target-libgcc);
-            // The osdev people say to build libstdc++, but for some reason the config script tests for stdio.h, which doesn't exist in a from-scratch freestanding environment
             JB_RUN(make all-target-libstdc++-v3);
 
             JB_RUN(make -j4 all-target-libgcc);
