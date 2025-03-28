@@ -305,6 +305,7 @@ void write_file(const char *path, const char *text) {
 const char *_x86_archs[] = {
     "x86",
     "i386",
+    "i686",
     "x86_64",
     "x64",
     NULL,
@@ -320,31 +321,28 @@ int is_x86_arch(const char *arch) {
     return 0;
 }
 
-void build_target(const char *target) {
+int is_linux_target(const char *target) {
+    return strstr(target, "linux") != NULL;
+}
 
+int is_gnu_target(const char *target) {
+    return strstr(target, "-gnu") != NULL;
+}
+
+int is_darwin_target(const char *target) {
+    return strstr(target, "-darwin") != NULL;
+}
+
+int is_win_target(const char *target) {
+    return strstr(target, "-msvc") != NULL || strstr(target, "-mingw") != NULL;
+}
+
+int is_freestanding_target(const char *target) {
+    return !is_linux_target(target) && !is_gnu_target(target) && !is_darwin_target(target) && !is_win_target(target);
+}
+
+void build_linux_headers(const char *target) {
     char *arch = get_arch(target);
-
-    mkdir(TARGET_BUILD(/));
-    chdir(TARGET_BUILD(/));
-
-    // install_llvm_toolchain(TOOLCHAIN());
-
-    char *system_path = jb_copy_string(getenv("PATH"));
-
-    putenv(FMT("PATH=%s:%s/bin:%s", NATIVE_TOOLS(bin/), STAGE1_PREFIX, getenv("PATH")));
-
-    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/usr/lib));
-    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/usr/bin));
-    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/usr/sbin));
-    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/etc));
-    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/var));
-
-    if (!jb_file_exists(TOOLCHAIN_TARGET(target, SYS_ROOT/lib)))
-        JB_RUN(ln -s, STR(./usr/lib), TOOLCHAIN_TARGET(target, SYS_ROOT/lib));
-    if (!jb_file_exists(TOOLCHAIN_TARGET(target, SYS_ROOT/bin)))
-        JB_RUN(ln -s, STR(./usr/bin), TOOLCHAIN_TARGET(target, SYS_ROOT/bin));
-    if (!jb_file_exists(TOOLCHAIN_TARGET(target, SYS_ROOT/sbin)))
-        JB_RUN(ln -s, STR(./usr/sbin), TOOLCHAIN_TARGET(target, SYS_ROOT/sbin));
 
     if (!jb_file_exists(TOOLCHAIN_TARGET(target, SYS_ROOT/usr/include/linux)) || 1) {
         if (!jb_file_exists(STR(linux-LINUX_VERSION))) {
@@ -383,6 +381,86 @@ void build_target(const char *target) {
 
         chdir("..");
     }
+}
+
+void build_gcc(const char *target, int is_gnu, int is_freestanding) {
+    if ((!jb_file_exists(FMT("%s/bin/%s-gcc", TOOLCHAIN(), target)))) {
+
+        if (!jb_file_exists(STR(gcc-GCC_VERSION))) {
+            DOWNLOAD_AND_EXTRACT2(gcc, GCC_VERSION);
+
+            chdir(STR(gcc-GCC_VERSION));
+
+            JB_RUN(./contrib/download_prerequisites);
+
+            chdir("..");
+        }
+
+        mkdir(STR(gcc-build));
+        chdir(STR(gcc-build));
+
+        JB_RUN(../gcc-GCC_VERSION/configure
+                --disable-multilib
+                --enable-shared
+                --enable-threads
+                --disable-nls,
+                is_gnu ? STR(--with-glibc-version=GLIBC_VERSION) : "",
+                is_freestanding ? "--disable-hosted-libstdcxx" : "",
+                FMT("--enable-languages=%s", GCC_LANGS),
+                !is_freestanding ? FMT("--with-sysroot=%s", TOOLCHAIN_TARGET(target, SYS_ROOT)) : "", // --with-sysroot overrides --without-headers
+                is_freestanding ? "--without-headers" : "",
+                FMT("--target=%s", target),
+                FMT("--prefix=%s", TOOLCHAIN()));
+
+        // Finish gcc
+        if (is_freestanding) {
+            JB_RUN(make -j4 all-gcc);
+            JB_RUN(make all-target-libgcc);
+            // The osdev people say to build libstdc++, but for some reason the config script tests for stdio.h, which doesn't exist in a from-scratch freestanding environment
+            JB_RUN(make all-target-libstdc++-v3);
+
+            JB_RUN(make -j4 all-target-libgcc);
+            JB_RUN(make install-target-libgcc);
+            JB_RUN(make install-target-libstdc++-v3);
+        }
+        else {
+            JB_RUN(make -j4 all);
+            JB_RUN(make install);
+        }
+
+        chdir("..");
+    }
+}
+
+void build_target(const char *target) {
+
+    char *arch = get_arch(target);
+
+    mkdir(TARGET_BUILD(/));
+    chdir(TARGET_BUILD(/));
+
+    // install_llvm_toolchain(TOOLCHAIN());
+
+    char *system_path = jb_copy_string(getenv("PATH"));
+
+    putenv(FMT("PATH=%s:%s/bin:%s", NATIVE_TOOLS(bin/), STAGE1_PREFIX, getenv("PATH")));
+
+    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/usr/lib));
+    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/usr/include));
+    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/usr/bin));
+    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/usr/sbin));
+    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/etc));
+    JB_RUN(mkdir -p, TOOLCHAIN_TARGET(target, SYS_ROOT/var));
+
+    if (!jb_file_exists(TOOLCHAIN_TARGET(target, SYS_ROOT/lib)))
+        JB_RUN(ln -s, STR(./usr/lib), TOOLCHAIN_TARGET(target, SYS_ROOT/lib));
+    if (!jb_file_exists(TOOLCHAIN_TARGET(target, SYS_ROOT/bin)))
+        JB_RUN(ln -s, STR(./usr/bin), TOOLCHAIN_TARGET(target, SYS_ROOT/bin));
+    if (!jb_file_exists(TOOLCHAIN_TARGET(target, SYS_ROOT/sbin)))
+        JB_RUN(ln -s, STR(./usr/sbin), TOOLCHAIN_TARGET(target, SYS_ROOT/sbin));
+
+    if (is_linux_target(target))
+        build_linux_headers(target);
 
     if (!jb_file_exists(TOOLCHAIN_TARGET(target, bin/ld))) {
         download_extract_gnu("binutils", STR(BINUTILS_VERSION));
@@ -401,41 +479,21 @@ void build_target(const char *target) {
         chdir("..");
     }
 
-    build_stage1_gcc(target);
+    int is_gnu = is_gnu_target(target);
+    int is_freestanding = is_freestanding_target(target);
 
-    build_glibc(target);
-
-    if ((!jb_file_exists(FMT("%s/bin/%s-gcc", TOOLCHAIN(), target)))) {
-
-        if (!jb_file_exists(STR(gcc-GCC_VERSION))) {
-            DOWNLOAD_AND_EXTRACT2(gcc, GCC_VERSION);
-
-            chdir(STR(gcc-GCC_VERSION));
-
-            JB_RUN(./contrib/download_prerequisites);
-
-            chdir("..");
+    if (is_freestanding) {
+        build_gcc(target, is_gnu, is_freestanding);
+    }
+    else {
+        if (is_gnu) {
+            build_stage1_gcc(target);
+            build_glibc(target);
+            build_gcc(target, is_gnu, is_freestanding);
         }
-
-        mkdir(STR(gcc-build));
-        chdir(STR(gcc-build));
-
-        JB_RUN(../gcc-GCC_VERSION/configure
-                --with-glibc-version=GLIBC_VERSION
-                --disable-multilib
-                --enable-shared
-                --enable-threads
-                --disable-nls,
-                FMT("--enable-languages=%s", GCC_LANGS),
-                FMT("--with-sysroot=%s", TOOLCHAIN_TARGET(target, SYS_ROOT)),
-                FMT("--target=%s", target),
-                FMT("--prefix=%s", TOOLCHAIN()));
-
-        // Finish gcc
-        JB_RUN(make -j4 all);
-        JB_RUN(make install);
-
-        chdir("..");
+        else {
+            build_gcc(target, is_gnu, is_freestanding);
+        }
     }
 
     chdir("..");
