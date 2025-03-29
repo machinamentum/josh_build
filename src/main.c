@@ -2,14 +2,18 @@
 #define JOSH_BUILD_IMPL
 #include "josh_build.h"
 
+#define TOOLCHAIN_BUILDER_MAIN toolchain_builder
+int TOOLCHAIN_BUILDER_MAIN(int argc, char *argv[]);
+
 void usage() {
     printf("Usage: josh [tool] <args>\n");
-    printf("    build             : build build.josh file in current directory\n");
-    printf("    build-file        : specify file path to josh build file to build\n");
-    printf("    cc                : invoke C compiler; use -target <triple> to use cross compiler\n");
-    printf("    init              : generate project template in current working directory\n");
-    printf("    init-freestanding : generate a free-standing project template that can be built without the josh command.\n");
-    printf("    library           : dump josh build header library\n");
+    printf("    build                  : build build.josh file in current directory\n");
+    printf("    build-file             : specify file path to josh build file to build\n");
+    printf("    cc                     : invoke C compiler; use -target <triple> to use cross compiler\n");
+    printf("    init                   : generate project template in current working directory\n");
+    printf("    init-freestanding      : generate a free-standing project template that can be built without the josh command.\n");
+    printf("    library                : dump josh build header library\n");
+    printf("    toolchain [triple] ... : download and build a toolchain in PWD/toolchains. Specify llvm to build clang+llvm tools.\n");
     printf("\n");
 }
 
@@ -197,6 +201,12 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    if (strcmp(argv[1], "toolchain") == 0) {
+        return TOOLCHAIN_BUILDER_MAIN(argc - 1, argv + 1);
+    }
+
     usage();
     return 0;
 }
+
+#include "toolchain_builder.josh"

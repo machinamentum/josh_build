@@ -108,12 +108,15 @@ typedef struct {
     char *ld;
     char *ar;
 
+    char *clang;
+
     char *sysroot;
 } JBToolchain;
 
 void jb_set_toolchain_directory(const char *path);
 JBToolchain *jb_native_toolchain();
 JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRuntime runtime);
+JBToolchain *jb_find_llvm_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRuntime runtime);
 JBToolchain *jb_find_toolchain_by_triple(const char *triple);
 char *jb_get_triple(JBToolchain *toolchain);
 
@@ -1691,6 +1694,35 @@ char *_jb_vendor_from_triple(const char *target) {
     return vendor;
 }
 
+JBToolchain *jb_find_llvm_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRuntime runtime) {
+    if (!jb_file_exists(_jb_toolchain_dir)) {
+        return NULL;
+    }
+
+    JBToolchain *tc = malloc(sizeof(JBToolchain));
+    memset(tc, 0, sizeof(JBToolchain));
+
+    tc->triple.arch = arch;
+    tc->triple.vendor = vendor;
+    tc->triple.runtime = runtime;
+
+    tc->clang = _jb_check_for_tool(NULL, "clang", 1);
+    tc->ar = _jb_check_for_tool(NULL, "llvm-ar", 1);
+
+    if (runtime == JB_ENUM(MSVC)) {
+        tc->cc = _jb_check_for_tool(NULL, "clang-cl", 1);
+        tc->ld = _jb_check_for_tool(NULL, "lld-link", 1);
+    }
+    else {
+        tc->cc = tc->clang;
+        tc->cxx = _jb_check_for_tool(NULL, "clang++", 1);
+        // Should this be ld.lld for emulation mode?
+        tc->ld = _jb_check_for_tool(NULL, "lld", 1);
+    }
+
+    return tc;
+}
+
 JBToolchain *jb_find_toolchain_by_triple(const char *triplet) {
     char *toolchain_dir = jb_format_string("%s/%s", _jb_toolchain_dir, triplet);
     if (!jb_file_exists(toolchain_dir)) {
@@ -1714,8 +1746,12 @@ JBToolchain *jb_find_toolchain_by_triple(const char *triplet) {
     tc->ld = _jb_check_for_tool(triplet, "ld", 0);
     tc->ar = _jb_check_for_tool(triplet, "ar", 0);
 
-    tc->sysroot = jb_format_string("%s/sys-root", toolchain_dir);
+    tc->clang = _jb_check_for_tool(triplet, "clang", 1);
 
+    if (!tc->cc)
+        tc->cc = tc->clang;
+
+    tc->sysroot = jb_format_string("%s/sys-root", toolchain_dir);
     return tc;
 }
 
@@ -1727,6 +1763,7 @@ JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRu
     const char *_vendor = _jb_vendor_string(vendor);
     const char *_runtime = _jb_runtime_string(runtime);
 
+    // TODO this should be much more robust to support weird triples like i686-elf
     char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
     return jb_find_toolchain_by_triple(triplet);
 }

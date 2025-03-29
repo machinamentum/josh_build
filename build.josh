@@ -21,7 +21,7 @@ int main(int argc, char *argv[]) {
     }
 
     const char **sources = JB_STRING_ARRAY("src/main.c");
-    const char **cflags = JB_STRING_ARRAY("-Wall");
+    const char **cflags = JB_STRING_ARRAY("-Wall", "-Itools");
 
     {
         jb_generate_embed("src/josh_build.h", "src/josh_build_embed.h");
