@@ -3,7 +3,7 @@
 #define JOSH_TOOLS_BUILD_ENVIRONMENT_H
 
 #define DOWNLOAD_AND_EXTRACT_GENERIC(lib, version, link) \
-DOWNLOAD_GENERIC(STR(lib-version.tar.COMPRESSION), STR(link)); \
+DOWNLOAD_GENERIC(STR(lib-version.tar.COMPRESSION), link); \
 if (!jb_file_exists(STR(lib-version))) UNTAR(ARCHIVE(lib-version.tar.COMPRESSION))
 
 #define DOWNLOAD_GENERIC(name, link) \

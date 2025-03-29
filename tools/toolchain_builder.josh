@@ -52,14 +52,14 @@
 
 #define COMPRESSION gz
 
-#define GNU_LINK https:/\/mirror.us-midwest-1.nexcess.net/gnu
+#define GNU_LINK "https://mirror.us-midwest-1.nexcess.net/gnu"
 
 #define DOWNLOAD_AND_EXTRACT(lib, version) \
-DOWNLOAD_GENERIC(STR(lib-version.tar.COMPRESSION), STR(GNU_LINK/lib/lib-version.tar.COMPRESSION)); \
+DOWNLOAD_GENERIC(STR(lib-version.tar.COMPRESSION), GNU_LINK STR(/lib/lib-version.tar.COMPRESSION)); \
 if (!jb_file_exists(STR(lib-version))) UNTAR(ARCHIVE(lib-version.tar.COMPRESSION))
 
 #define DOWNLOAD_AND_EXTRACT2(lib, version) \
-DOWNLOAD_GENERIC(STR(lib-version.tar.COMPRESSION), STR(GNU_LINK/lib/lib-version/lib-version.tar.COMPRESSION)); \
+DOWNLOAD_GENERIC(STR(lib-version.tar.COMPRESSION), GNU_LINK STR(/lib/lib-version/lib-version.tar.COMPRESSION)); \
 if (!jb_file_exists(STR(lib-version))) UNTAR(ARCHIVE(lib-version.tar.COMPRESSION))
 
 #if JB_IS_MACOS
@@ -122,7 +122,7 @@ void install_llvm_toolchain(const char *prefix) {
     if (!jb_file_exists(ARCHIVE(llvm-project))) {
         chdir(ARCHIVE(/));
 
-        JB_RUN(git clone --depth 1 --branch llvmorg-19.1.7 https:/\/github.com/llvm/llvm-project.git);
+        JB_RUN(git clone --depth 1 --branch llvmorg-19.1.7, "https://github.com/llvm/llvm-project.git");
 
         chdir(WORKSPACE);
     }
@@ -349,7 +349,7 @@ void build_linux_headers(const char *target) {
 
     if (!jb_file_exists(TOOLCHAIN_TARGET(target, SYS_ROOT/usr/include/linux)) || 1) {
         if (!jb_file_exists(STR(linux-LINUX_VERSION))) {
-            DOWNLOAD_AND_EXTRACT_GENERIC(linux, LINUX_VERSION, https:/\/cdn.kernel.org/pub/linux/kernel/v6.x/linux-LINUX_VERSION.tar.xz);
+            DOWNLOAD_AND_EXTRACT_GENERIC(linux, LINUX_VERSION, "https://cdn.kernel.org/pub/linux/kernel/v6.x/" STR(linux-LINUX_VERSION.tar.xz));
         }
 
         chdir(STR(linux-LINUX_VERSION));
