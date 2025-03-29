@@ -70,11 +70,13 @@ char **josh_parse_arguments(int argc, char *argv[]);
 enum JBArch {
     JB_ENUM(INVALID_ARCH),
     JB_ENUM(X86_64),
+    JB_ENUM(X86),
     JB_ENUM(ARM64),
 };
 
 enum JBVendor {
     JB_ENUM(INVALID_VENDOR),
+    JB_ENUM(UNKNOWN_VENDOR),
     JB_ENUM(Apple),
     JB_ENUM(Linux),
     JB_ENUM(Windows),
@@ -85,6 +87,7 @@ enum JBRuntime {
     JB_ENUM(Darwin),
     JB_ENUM(GNU),
     JB_ENUM(MSVC),
+    JB_ENUM(ELF), // freestanding elf target
 };
 
 typedef struct {
@@ -1000,6 +1003,8 @@ const char *_jb_arch_string(enum JBArch arch) {
     switch (arch) {
     case JB_ENUM(X86_64):
         return "x86_64";
+    case JB_ENUM(X86):
+        return "x86";
     case JB_ENUM(ARM64):
         return "arm64";
     case JB_ENUM(INVALID_ARCH):
@@ -1011,6 +1016,8 @@ const char *_jb_arch_string(enum JBArch arch) {
 enum JBArch _jb_arch(const char *str) {
     if (strcmp(str, "x86_64") == 0)
         return JB_ENUM(X86_64);
+    if (strcmp(str, "x86") == 0 || strcmp(str, "i386") == 0 || strcmp(str, "i686") == 0)
+        return JB_ENUM(X86);
     if (strcmp(str, "arm64") == 0)
         return JB_ENUM(ARM64);
     if (strcmp(str, "aarch64") == 0)
@@ -1027,6 +1034,8 @@ const char *_jb_vendor_string(enum JBVendor vendor) {
         return "linux";
     case JB_ENUM(Windows):
         return "windows";
+    case JB_ENUM(UNKNOWN_VENDOR):
+        return "unknown";
     case JB_ENUM(INVALID_VENDOR):
     default:
         return NULL;
@@ -1034,6 +1043,9 @@ const char *_jb_vendor_string(enum JBVendor vendor) {
 }
 
 enum JBVendor _jb_vendor(const char *str) {
+    if (!str)
+        return JB_ENUM(UNKNOWN_VENDOR);
+
     if (strcmp(str, "apple") == 0)
         return JB_ENUM(Apple);
     if (strcmp(str, "linux") == 0)
@@ -1041,17 +1053,19 @@ enum JBVendor _jb_vendor(const char *str) {
     if (strcmp(str, "windows") == 0)
         return JB_ENUM(Windows);
 
-    return JB_ENUM(INVALID_VENDOR);
+    return JB_ENUM(UNKNOWN_VENDOR);
 }
 
 const char *_jb_runtime_string(enum JBRuntime runtime) {
     switch (runtime) {
     case JB_ENUM(Darwin):
         return "darwin";
-    case JB_ENUM(Linux):
+    case JB_ENUM(GNU):
         return "gnu";
-    case JB_ENUM(Windows):
+    case JB_ENUM(MSVC):
         return "msvc";
+    case JB_ENUM(ELF):
+        return "elf";
     case JB_ENUM(INVALID_RUNTIME):
     default:
         return NULL;
@@ -1065,6 +1079,8 @@ enum JBRuntime _jb_runtime(const char *str) {
         return JB_ENUM(GNU);
     if (strcmp(str, "msvc") == 0)
         return JB_ENUM(MSVC);
+    if (strcmp(str, "elf") == 0)
+        return JB_ENUM(ELF);
 
     return JB_ENUM(INVALID_RUNTIME);
 }
@@ -1636,17 +1652,37 @@ char *_jb_check_for_tool(const char *triplet, const char *tool, int is_llvm) {
     }
 }
 
-JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRuntime runtime) {
+char *_jb_arch_from_triple(const char *target) {
+    char *arch_end = strchr(target, '-');
 
-    if (arch == JB_DEFAULT_ARCH && vendor == JB_DEFAULT_VENDOR && runtime == JB_DEFAULT_RUNTIME)
-        return jb_native_toolchain();
+    char *arch = jb_format_string("%.*s", arch_end-target, target);
+    return arch;
+}
 
-    const char *_arch = _jb_arch_string(arch);
-    const char *_vendor = _jb_vendor_string(vendor);
-    const char *_runtime = _jb_runtime_string(runtime);
+char *_jb_runtime_from_triple(const char *target) {
+    char *run_start = strrchr(target, '-');
+    const char *run_end = target + strlen(target);
 
-    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
+    run_start += 1; // skip '-'
 
+    char *run = jb_format_string("%.*s", run_end-run_start, run_start);
+    return run;
+}
+
+char *_jb_vendor_from_triple(const char *target) {
+    char *vendor_start = strchr(target, '-');
+    char *vendor_end = strrchr(target, '-');
+
+    if (vendor_start == vendor_end)
+        return NULL;
+
+    vendor_start += 1;
+
+    char *vendor = jb_format_string("%.*s", vendor_end-vendor_start, vendor_start);
+    return vendor;
+}
+
+JBToolchain *jb_find_toolchain_by_triple(const char *triplet) {
     char *toolchain_dir = jb_format_string("%s/%s", _jb_toolchain_dir, triplet);
     if (!jb_file_exists(toolchain_dir)) {
         return NULL;
@@ -1655,9 +1691,13 @@ JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRu
     JBToolchain *tc = malloc(sizeof(JBToolchain));
     memset(tc, 0, sizeof(JBToolchain));
 
-    tc->triple.arch = arch;
-    tc->triple.vendor = vendor;
-    tc->triple.runtime = runtime;
+    char *arch = _jb_arch_from_triple(triplet);
+    char *vendor = _jb_vendor_from_triple(triplet);
+    char *runtime = _jb_runtime_from_triple(triplet);
+
+    tc->triple.arch = _jb_arch(arch);
+    tc->triple.vendor = _jb_vendor(vendor);
+    tc->triple.runtime = _jb_runtime(runtime);
 
     tc->cc = _jb_check_for_tool(triplet, "gcc", 0);
     tc->cxx = _jb_check_for_tool(triplet, "g++", 0);
@@ -1665,28 +1705,20 @@ JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRu
     tc->ar = _jb_check_for_tool(triplet, "ar", 0);
 
     tc->sysroot = jb_format_string("%s/sys-root", toolchain_dir);
+
     return tc;
 }
 
-JBToolchain *jb_find_toolchain_by_triple(const char *triple) {
-    char *arch = jb_format_string("%.*s", strchr(triple, '-') - triple, triple);
-    char *vendor = jb_format_string("%.*s", strrchr(triple, '-') - (triple + strlen(arch) + 1), triple + strlen(arch) + 1);
-    char *runtime = jb_format_string("%.*s", strlen(triple) - (strlen(arch) + strlen(vendor) + 2), triple + strlen(arch) + strlen(vendor) + 2);
+JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRuntime runtime) {
+    if (arch == JB_DEFAULT_ARCH && vendor == JB_DEFAULT_VENDOR && runtime == JB_DEFAULT_RUNTIME)
+        return jb_native_toolchain();
 
-    enum JBArch _arch = _jb_arch(arch);
-    enum JBVendor _vendor = _jb_vendor(vendor);
-    enum JBRuntime _runtime = _jb_runtime(runtime);
+    const char *_arch = _jb_arch_string(arch);
+    const char *_vendor = _jb_vendor_string(vendor);
+    const char *_runtime = _jb_runtime_string(runtime);
 
-    if (_arch == JB_ENUM(INVALID_ARCH)) 
-        JB_FAIL("Unsupported architecture %s", arch);
-
-    if (_vendor == JB_ENUM(INVALID_VENDOR))
-        JB_FAIL("Unsupported vendor '%s'", vendor);
-
-    if (_runtime == JB_ENUM(INVALID_RUNTIME))
-        JB_FAIL("Unsupported runtime %s", runtime);
-
-    return jb_find_toolchain(_arch, _vendor, _runtime);
+    char *triplet = jb_format_string("%s-%s-%s", _arch, _vendor, _runtime);
+    return jb_find_toolchain_by_triple(triplet);
 }
 
 static JBToolchain __jb_native_toolchain;
