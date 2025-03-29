@@ -94,6 +94,8 @@ typedef struct {
     enum JBArch arch;
     enum JBVendor vendor;
     enum JBRuntime runtime;
+
+    char *name; // If given by the user, uses this name for tool lookups and error messaging
 } JBTriple;
 
 typedef struct {
@@ -114,6 +116,9 @@ JBToolchain *jb_native_toolchain();
 JBToolchain *jb_find_toolchain(enum JBArch arch, enum JBVendor vendor, enum JBRuntime runtime);
 JBToolchain *jb_find_toolchain_by_triple(const char *triple);
 char *jb_get_triple(JBToolchain *toolchain);
+
+// Find a tool in the target toolchains directory
+char *jb_toolchain_find_tool(JBToolchain *toolchain, const char *tool);
 
 #define JB_LIBRARY_STATIC (0 << 0)
 #define JB_LIBRARY_SHARED (1 << 0)
@@ -1652,6 +1657,10 @@ char *_jb_check_for_tool(const char *triplet, const char *tool, int is_llvm) {
     }
 }
 
+char *jb_toolchain_find_tool(JBToolchain *tc, const char *tool) {
+    return _jb_check_for_tool(jb_get_triple(tc), tool, 0);
+}
+
 char *_jb_arch_from_triple(const char *target) {
     char *arch_end = strchr(target, '-');
 
@@ -1695,6 +1704,7 @@ JBToolchain *jb_find_toolchain_by_triple(const char *triplet) {
     char *vendor = _jb_vendor_from_triple(triplet);
     char *runtime = _jb_runtime_from_triple(triplet);
 
+    tc->triple.name = jb_copy_string(triplet);
     tc->triple.arch = _jb_arch(arch);
     tc->triple.vendor = _jb_vendor(vendor);
     tc->triple.runtime = _jb_runtime(runtime);
@@ -1743,6 +1753,9 @@ JBToolchain *jb_native_toolchain() {
 }
 
 char *jb_get_triple(JBToolchain *toolchain) {
+    if (toolchain->triple.name)
+        return jb_copy_string(toolchain->triple.name);
+
     const char *_arch = _jb_arch_string(toolchain->triple.arch);
     const char *_vendor = _jb_vendor_string(toolchain->triple.vendor);
     const char *_runtime = _jb_runtime_string(toolchain->triple.runtime);
