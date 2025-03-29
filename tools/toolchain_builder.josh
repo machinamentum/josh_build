@@ -16,6 +16,9 @@
 // * build glibc with static gcc
 // * build target gcc again, but without disabling features and using glibc instead of newlib
 
+// Other useful links
+// https://gcc.gnu.org/install/specific.html -- GCC target triples
+
 #undef linux // we use the linux identifier token to build strings
 
 #include "build_environment.h"
@@ -418,7 +421,7 @@ void build_gcc(const char *target, int is_gnu, int is_freestanding) {
             JB_RUN(make all-target-libgcc);
             JB_RUN(make all-target-libstdc++-v3);
 
-            JB_RUN(make -j4 all-target-libgcc);
+            JB_RUN(make -j4 install-gcc);
             JB_RUN(make install-target-libgcc);
             JB_RUN(make install-target-libstdc++-v3);
         }
