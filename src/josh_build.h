@@ -136,6 +136,7 @@ typedef struct JBLibrary {
 
     const char **cflags;
     const char **cxxflags;
+    const char **asflags;
 
     struct JBLibrary **libraries;
 
@@ -157,6 +158,7 @@ typedef struct {
     const char **ldflags;
     const char **cflags;
     const char **cxxflags;
+    const char **asflags;
 
     JBLibrary **libraries;
 
@@ -167,6 +169,7 @@ void jb_build_exe(JBExecutable *exec);
 
 void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags);
 void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, const char **cxxflags);
+void jb_compile_asm(JBToolchain *tc, const char *source, const char *output, const char **asflags);
 
 void jb_run_string(const char *cmd, char *const extra[], const char *file, int line);
 void jb_run(char *const argv[], const char *file, int line);
@@ -1179,6 +1182,15 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *sou
     return out.data;
 }
 
+char **_jb_get_dependencies_asm(JBToolchain *tc, const char *tool, const char *source, const char **asflags) {
+    // TODO dependency tracking for assembler sources
+    JBVector(char *) out = {0};
+    JBVectorPush(&out, (char *)source);
+    JBVectorPush(&out, NULL);
+
+    return out.data;
+}
+
 void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags) {
 
     char *triplet = jb_get_triple(tc);
@@ -1299,8 +1311,67 @@ void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, con
     free(triplet);
 }
 
+void jb_compile_asm(JBToolchain *tc, const char *source, const char *output, const char **asflags) {
+    char *triplet = jb_get_triple(tc);
+
+    JB_ASSERT(tc->cc, "Toolchain (%s) missing assembler", triplet);
+
+    char **deps = _jb_get_dependencies_asm(tc, tc->cc, source, asflags);
+
+    JB_ASSERT(deps, "couldn't compute dependenices for %s", source);
+
+    int needs_build = 0;
+    JBNullArrayFor(deps) {
+        if (jb_file_is_newer(deps[index], output)) {
+            needs_build = 1;
+            break;
+        }
+    }
+
+    free(deps);
+
+    if (!needs_build)
+        return;
+
+    JB_LOG("compile %s\n", source);
+
+    JBVector(char *) cmd = {0};
+
+    JBVectorPush(&cmd, tc->cc);
+
+    if (triplet && strstr(tc->cc, "clang") != NULL) {
+        JBVectorPush(&cmd, "-target");
+        JBVectorPush(&cmd, triplet);
+
+        // JBVectorPush(&cmd, "--rtlib=compiler-rt");
+    }
+
+    if (tc->sysroot) {
+        // TODO check if Apple LD or GNU LD
+        // JBVectorPush(&cmd, "-syslibroot");
+        JBVectorPush(&cmd, "--sysroot");
+        JBVectorPush(&cmd, tc->sysroot);
+    }
+
+    JBNullArrayFor(asflags) {
+        JBVectorPush(&cmd, (char *)asflags[index]);
+    }
+
+    JBVectorPush(&cmd, "-o");
+    JBVectorPush(&cmd, (char *)output);
+    JBVectorPush(&cmd, "-c");
+    JBVectorPush(&cmd, (char *)source);
+
+    JBVectorPush(&cmd, NULL);
+    jb_run(cmd.data, __FILE__, __LINE__);
+
+    free(cmd.data);
+
+    free(triplet);
+}
+
 int _jb_supported_source_ext(const char *ext) {
-    return strcmp(ext, "c") == 0 || strcmp(ext, "cpp") == 0;
+    return strcmp(ext, "c") == 0 || strcmp(ext, "cpp") == 0 || strcmp(ext, "s") == 0;
 }
 
 void _jb_init_build(const char *build_folder, const char *object_folder)  {
@@ -1308,7 +1379,7 @@ void _jb_init_build(const char *build_folder, const char *object_folder)  {
     JB_RUN_CMD("mkdir", "-p", object_folder);
 }
 
-char **_jb_collect_objects(JBToolchain *tc, const char *object_folder, const char **sources, const char **cflags, const char **cxxflags) {
+char **_jb_collect_objects(JBToolchain *tc, const char *object_folder, const char **sources, const char **cflags, const char **cxxflags, const char **asflags) {
     JBVector(char *) object_files = {0};
 
     JBNullArrayFor(sources) {
@@ -1327,6 +1398,8 @@ char **_jb_collect_objects(JBToolchain *tc, const char *object_folder, const cha
             jb_compile_c(tc, sources[index], object, &cflags[0]);
         else if (strcmp(ext, "cpp") == 0)
             jb_compile_cxx(tc, sources[index], object, &cxxflags[0]);
+        else if (strcmp(ext, "s") == 0)
+            jb_compile_asm(tc, sources[index], object, &asflags[0]);
 
         JBVectorPush(&object_files, object);
     }
@@ -1451,7 +1524,7 @@ void jb_build_exe(JBExecutable *exec) {
 
     _jb_init_build(exec->build_folder, object_folder);
 
-    char **object_files = _jb_collect_objects(tc, object_folder, exec->sources, exec->cflags, exec->cxxflags);
+    char **object_files = _jb_collect_objects(tc, object_folder, exec->sources, exec->cflags, exec->cxxflags, exec->asflags);
 
     char *link_command = _jb_get_link_command(tc, exec->sources);
 
@@ -1529,7 +1602,7 @@ void jb_build_lib(JBLibrary *target) {
 
     _jb_init_build(target->build_folder, object_folder);
 
-    char **object_files = _jb_collect_objects(tc, object_folder, target->sources, target->cflags, target->cxxflags);
+    char **object_files = _jb_collect_objects(tc, object_folder, target->sources, target->cflags, target->cxxflags, target->asflags);
 
     char *link_command = _jb_get_link_command(tc, target->sources);
 
