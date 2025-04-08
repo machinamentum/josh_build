@@ -85,15 +85,13 @@ The `toolchains` folder is typically expected to contain:
 
 /<target>/sys-root/ -- sysroot containing system headers, libc, libc++, and other packages
 ```
+#### Building a Toolchain
 
-`tools/toolchain_builder.josh` can be used to build a basic Linux cross-compiler with Linux kernel headers, glibc, libstdc++, etc...
-Example:
+`josh toolchain <triple>` can be used to build a basic Linux cross-compiler with Linux kernel headers, glibc, libstdc++, etc...
+
+The script `tools/toolchain_builder.josh` may also be used:
 ```
 josh build-file tools/toolchain_builder.josh arm64-linux-gnu
-```
-Using josh build's build.josh script:
-```
-josh build toolchain arm64-linux-gnu
 ```
 
 ## License
