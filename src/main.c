@@ -6,7 +6,8 @@
 int TOOLCHAIN_BUILDER_MAIN(int argc, char *argv[]);
 
 void usage() {
-    printf("Usage: josh [tool] <args>\n");
+    printf("Usage: josh [option] [tool] <args>\n\n");
+    printf("tool:\n");
     printf("    build                  : build build.josh file in current directory\n");
     printf("    build-file             : specify file path to josh build file to build\n");
     printf("    cc                     : invoke C compiler; use -target <triple> to use cross compiler\n");
@@ -14,6 +15,10 @@ void usage() {
     printf("    init-freestanding      : generate a free-standing project template that can be built without the josh command.\n");
     printf("    library                : dump josh build header library\n");
     printf("    toolchain [triple] ... : download and build a toolchain in PWD/toolchains. Specify llvm to build clang+llvm tools.\n");
+
+    printf("\noption:\n");
+    printf("    -d                     : make josh_runner debuggable\n");
+    printf("                             retains josh_runner, build.josh.c, and file and line numbers for build.josh.c\n");
     printf("\n");
 }
 
@@ -71,7 +76,20 @@ int main(int argc, char *argv[]) {
     // Disable logging to a file; we expect to generate nearly 0 text in the driver anyways
     _jb_log_print_only = 1;
 
-    if (strcmp(argv[1], "build") == 0) {
+    int index = 1;
+
+    if (strcmp(argv[index], "-d") == 0) {
+        _jb_debug_runner = 1;
+
+        index += 1;
+    }
+
+    if (index >= argc) {
+        usage();
+        return 0;
+    }
+
+    if (strcmp(argv[index], "build") == 0) {
 
         const char *name = "build.josh";
 
@@ -81,7 +99,7 @@ int main(int argc, char *argv[]) {
 
         JBVector(char *) args = {0};
 
-        for (int i = 2; i < argc; i++)
+        for (int i = index+1; i < argc; i++)
             JBVectorPush(&args, argv[i]);
 
         JBVectorPush(&args, NULL);
@@ -93,9 +111,9 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    if (strcmp(argv[1], "build-file") == 0 && argc > 2) {
-
-        const char *name = argv[2];
+    if (strcmp(argv[index], "build-file") == 0 && argc > 2) {
+        index += 1;
+        const char *name = argv[index];
 
         if (!jb_file_exists(name)) {
             JB_FAIL("file not found: %s", name);
@@ -103,7 +121,7 @@ int main(int argc, char *argv[]) {
 
         JBVector(char *) args = {0};
 
-        for (int i = 3; i < argc; i++)
+        for (int i = index+1; i < argc; i++)
             JBVectorPush(&args, argv[i]);
 
         JBVectorPush(&args, NULL);
@@ -115,7 +133,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    if (strcmp(argv[1], "init") == 0) {
+    if (strcmp(argv[index], "init") == 0) {
         JB_RUN(mkdir -p src);
 
         if (jb_file_exists("build.josh"))
@@ -130,7 +148,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    if (strcmp(argv[1], "init-freestanding") == 0) {
+    if (strcmp(argv[index], "init-freestanding") == 0) {
         JB_RUN(mkdir -p src);
 
         if (jb_file_exists("build.josh"))
@@ -164,12 +182,12 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    if (strcmp(argv[1], "library") == 0) {
+    if (strcmp(argv[index], "library") == 0) {
         dump_library(stdout);
         return 0;
     }
 
-    if (strcmp(argv[1], "cc") == 0) {
+    if (strcmp(argv[index], "cc") == 0) {
         JBToolchain *tc = jb_native_toolchain();
         const char *target_opt = "-target";
         for (int i = 2; i < (argc - 1); i++) {
@@ -201,7 +219,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    if (strcmp(argv[1], "toolchain") == 0) {
+    if (strcmp(argv[index], "toolchain") == 0) {
         return TOOLCHAIN_BUILDER_MAIN(argc - 1, argv + 1);
     }
 

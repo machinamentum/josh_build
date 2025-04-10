@@ -361,6 +361,12 @@ int _jb_log_print_only = 0;
 int _jb_verbose_show_commands = 0;
 int _jb_log_fd = -1;
 
+// set to 1 to make josh_build() make josh_runner debuggable:
+// adds -g flag
+// sets file and line numbers to correspond to intermediate build.josh.c file
+// retains josh_runner and build.josh.c files
+int _jb_debug_runner = 0;
+
 // experimental: enable/disable psuedo-terminal mode;
 // performs additional filtering when writing to log file to remove control sequences
 // enables pretty, colored text in terminal output.
@@ -549,15 +555,22 @@ char *_jb_read_file(const char *path, size_t *out_len) {
 extern const char _jb_josh_build_src[];
 
 void josh_build(const char *path, char *args[]) {
+    const char *build_folder = "build";
+    JB_RUN(mkdir -p, build_folder);
+
     char *build_source = _jb_read_file(path, NULL);
 
     JB_ASSERT(build_source, "could not read file: %s", path);
 
-    char *josh_builder_file = jb_format_string("%s.c", path);
+    char *josh_builder_file = jb_format_string("%s/%s.c", build_folder, path);
 
     FILE *out = fopen(josh_builder_file, "wb");
-    const char *preamble = "#define JOSH_BUILD_IMPL\n#line 1 \"josh_build.h\"\n";
-    fwrite(preamble, 1, strlen(preamble), out);
+    const char *preamble = "#define JOSH_BUILD_IMPL\n";
+    fputs(preamble, out);
+
+    if (!_jb_debug_runner)
+        fputs("#line 1 \"josh_build.h\"\n", out);
+
     fwrite(_jb_josh_build_src, 1, strlen(_jb_josh_build_src), out);
     fputc('\n', out);
 
@@ -579,13 +592,19 @@ void josh_build(const char *path, char *args[]) {
         fputs("#endif // JOSH_BUILD_IMPL\n", out);
     }
 
-    fputs("#line 1 \"build.josh.c\"\n", out);
+    if (!_jb_debug_runner)
+        fputs("#line 1 \"build.josh.c\"\n", out);
+
     fwrite(build_source, 1, strlen(build_source), out);
     fclose(out);
 
     JBExecutable josh = {"josh_builder"};
+    josh.build_folder = build_folder;
     josh.sources = JB_STRING_ARRAY(josh_builder_file);
-    josh.build_folder = "build";
+
+    if (_jb_debug_runner)
+        josh.cflags = JB_STRING_ARRAY("-g");
+
     jb_build_exe(&josh);
 
     char *josh_builder_exe = jb_format_string("%s/%s", josh.build_folder, josh.name);
@@ -605,8 +624,10 @@ void josh_build(const char *path, char *args[]) {
         free(cmds.data);
     }
 
-    remove(josh_builder_file);
-    remove(josh_builder_exe);
+    if (!_jb_debug_runner) {
+        remove(josh_builder_file);
+        remove(josh_builder_exe);
+    }
 
     free(josh_builder_file);
 }
@@ -748,12 +769,12 @@ int _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_f
         close(pipefd[0]);
 
         if (WIFSIGNALED(wstatus)) {
-            jb_log_print("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
+            jb_log("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
             return 0;
         }
 
         if (WEXITSTATUS(wstatus) != 0) {
-            jb_log_print("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
+            jb_log("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
             return 0;
         }
 
@@ -792,12 +813,14 @@ char *jb_run_get_output(char *const argv[], const char *file, int line) {
 
     char *output = jb_sb_to_string(&sb);
 
+    jb_sb_free(&sb);
+
     if (!result) {
-        jb_log_print("%s", output);
-        exit(1);
+        jb_log("%s", output);
+        free(output);
+        return NULL;
     }
 
-    jb_sb_free(&sb);
     return output;
 }
 
@@ -1199,13 +1222,19 @@ void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const
 
     char **deps = _jb_get_dependencies_c(tc, tc->cc, source, cflags);
 
-    JB_ASSERT(deps, "couldn't compute dependenices for %s", source);
-
     int needs_build = 0;
-    JBNullArrayFor(deps) {
-        if (jb_file_is_newer(deps[index], output)) {
-            needs_build = 1;
-            break;
+
+    if (!deps) {
+        jb_log("couldn't compute dependenices for %s, rebuilding...\n", source);
+        needs_build = 1;
+    }
+
+    if (!needs_build) {
+        JBNullArrayFor(deps) {
+            if (jb_file_is_newer(deps[index], output)) {
+                needs_build = 1;
+                break;
+            }
         }
     }
 
@@ -1968,7 +1997,7 @@ void jb_sb_puts(JBStringBuilder *sb, const char *s) {
     char *out = jb_arena_alloc(arena, strlen(s), 1);
 
     if (!out) {
-        arena = _jb_sb_new_arena(sb, strlen(out));
+        arena = _jb_sb_new_arena(sb, strlen(s));
         out = jb_arena_alloc(arena, strlen(s), 1);
 
         if (!out)
