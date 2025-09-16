@@ -699,7 +699,7 @@ int _jb_pipe_has_data(int fd) {
 }
 
 void _jb_drain_pipe(int fd, void *context, _JBDrainPipeFn fn) {
-    const size_t buffer_size = 4096*2;
+    enum { buffer_size = 4096*2 };
     char buffer[buffer_size];
 
     while (_jb_pipe_read_would_not_block(fd)) {
