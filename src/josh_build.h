@@ -19,6 +19,11 @@
 // A convenience macro is provided: JB_STRING_ARRAY("mycoolsrc.c", "myawesomesrc.c")
 // Convenience function to count entries in string array: jb_string_array_count(array)
 
+// Generally, if a function returns a const-ptr such as `const char *`
+// There is no new memory being used to store the contents of the pointer, the lifetime of
+// the returned value may be dependent on the lifetime of one of the arguments.
+// A plain pointer `char *` will require being free'd.
+
 #ifndef JOSH_BUILD_H
 #define JOSH_BUILD_H
 
@@ -196,8 +201,11 @@ char *jb_format_string(const char *fmt, ...);
 
 const char *jb_filename(const char *path);
 const char *jb_extension(const char *path);
+char *jb_drop_last_path_component(const char *path);
 
 int jb_file_exists(const char *path);
+
+char *jb_file_fullpath(const char *path);
 
 // Generates #embed-style text in output_file based on the contents of input_file
 void jb_generate_embed(const char *input_file, const char *output_file);
@@ -602,6 +610,11 @@ void josh_build(const char *path, char *args[]) {
     josh.build_folder = build_folder;
     josh.sources = JB_STRING_ARRAY(josh_builder_file);
 
+    char *fullpath = jb_file_fullpath(path);
+    char *folder_path = fullpath ? jb_drop_last_path_component(fullpath) : NULL;
+    char *include_filepath = folder_path ? jb_format_string("-I%s", folder_path) : NULL;
+    josh.cflags = JB_STRING_ARRAY(include_filepath);
+
     if (_jb_debug_runner)
         josh.cflags = JB_STRING_ARRAY("-g");
 
@@ -630,6 +643,10 @@ void josh_build(const char *path, char *args[]) {
     }
 
     free(josh_builder_file);
+    free(josh_builder_exe);
+    free(fullpath);
+    free(folder_path);
+    free(include_filepath);
 }
 
 char **josh_parse_arguments(int argc, char *argv[]) {
@@ -1031,6 +1048,25 @@ const char *jb_extension(const char *path) {
         ext += 1;
 
     return ext;
+}
+
+char *jb_drop_last_path_component(const char *path) {
+    char *slash = strrchr(path, '/');
+
+    if (slash) {
+        char *end = slash;
+
+        if (strlen(end) == 0)
+            return jb_copy_string(path);
+
+        size_t len = end-path;
+        char *out = malloc(len+1);
+        memcpy(out, path, len);
+        out[len] = 0;
+        return out;
+    }
+
+    return jb_copy_string(path);
 }
 
 const char *_jb_arch_string(enum JBArch arch) {
@@ -1678,6 +1714,10 @@ void jb_build_lib(JBLibrary *target) {
 
 int jb_file_exists(const char *path) {
     return access(path, F_OK) == 0;
+}
+
+char *jb_file_fullpath(const char *path) {
+    return realpath(path, NULL);
 }
 
 char *jb_getcwd() {
