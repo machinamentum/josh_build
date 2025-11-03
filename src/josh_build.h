@@ -572,61 +572,69 @@ void josh_build(const char *path, char *args[]) {
     const char *build_folder = "build";
     JB_RUN(mkdir -p, build_folder);
 
-    char *build_source = _jb_read_file(path, NULL);
-
-    JB_ASSERT(build_source, "could not read file: %s", path);
-
     char *josh_builder_file = jb_format_string("%s/%s.c", build_folder, path);
-
-    FILE *out = fopen(josh_builder_file, "wb");
-    const char *preamble = "#define JOSH_BUILD_IMPL\n";
-    fputs(preamble, out);
-
-    if (!_jb_debug_runner)
-        fputs("#line 1 \"josh_build.h\"\n", out);
-
-    fwrite(_jb_josh_build_src, 1, strlen(_jb_josh_build_src), out);
-    fputc('\n', out);
-
-    {
-        fputs("#ifdef JOSH_BUILD_IMPL\n", out);
-        fputs("const char _jb_josh_build_src[] = {\n", out);
-
-        const char *text = _jb_josh_build_src;
-        while (*text) {
-            fprintf(out, "0x%X", *text);
-
-            text += 1;
-            if (*text)
-                fprintf(out, ", ");
-        }
-        fputs("\n    , 0\n", out);
-
-        fputs("};\n", out);
-        fputs("#endif // JOSH_BUILD_IMPL\n", out);
-    }
-
-    if (!_jb_debug_runner)
-        fputs("#line 1 \"build.josh.c\"\n", out);
-
-    fwrite(build_source, 1, strlen(build_source), out);
-    fclose(out);
 
     JBExecutable josh = {"josh_builder"};
     josh.build_folder = build_folder;
     josh.sources = JB_STRING_ARRAY(josh_builder_file);
 
-    char *fullpath = jb_file_fullpath(path);
-    char *folder_path = fullpath ? jb_drop_last_path_component(fullpath) : NULL;
-    char *include_filepath = folder_path ? jb_format_string("-I%s", folder_path) : NULL;
-    josh.cflags = JB_STRING_ARRAY(include_filepath);
+    char *josh_builder_exe = jb_format_string("%s/%s", build_folder, josh.name);
 
-    if (_jb_debug_runner)
-        josh.cflags = JB_STRING_ARRAY("-g");
+    if (jb_file_is_newer(path, josh_builder_exe)) {
+        printf("FILE IS NEWER %s, %s\n", path, josh_builder_file);
+        char *build_source = _jb_read_file(path, NULL);
 
-    jb_build_exe(&josh);
+        JB_ASSERT(build_source, "could not read file: %s", path);
 
-    char *josh_builder_exe = jb_format_string("%s/%s", josh.build_folder, josh.name);
+        FILE *out = fopen(josh_builder_file, "wb");
+        const char *preamble = "#define JOSH_BUILD_IMPL\n";
+        fputs(preamble, out);
+
+        if (!_jb_debug_runner)
+            fputs("#line 1 \"josh_build.h\"\n", out);
+
+        fwrite(_jb_josh_build_src, 1, strlen(_jb_josh_build_src), out);
+        fputc('\n', out);
+
+        {
+            fputs("#ifdef JOSH_BUILD_IMPL\n", out);
+            fputs("const char _jb_josh_build_src[] = {\n", out);
+
+            const char *text = _jb_josh_build_src;
+            while (*text) {
+                fprintf(out, "0x%X", *text);
+
+                text += 1;
+                if (*text)
+                    fprintf(out, ", ");
+            }
+            fputs("\n    , 0\n", out);
+
+            fputs("};\n", out);
+            fputs("#endif // JOSH_BUILD_IMPL\n", out);
+        }
+
+        if (!_jb_debug_runner)
+            fputs("#line 1 \"build.josh.c\"\n", out);
+
+        fwrite(build_source, 1, strlen(build_source), out);
+        fclose(out);
+
+        char *fullpath = jb_file_fullpath(path);
+        char *folder_path = fullpath ? jb_drop_last_path_component(fullpath) : NULL;
+        char *include_filepath = folder_path ? jb_format_string("-I%s", folder_path) : NULL;
+        josh.cflags = JB_STRING_ARRAY(include_filepath);
+
+        if (_jb_debug_runner)
+            josh.cflags = JB_STRING_ARRAY("-g");
+
+        jb_build_exe(&josh);
+
+        free(fullpath);
+        free(folder_path);
+        free(include_filepath);
+    }
+
     {
         JB_LOG("run %s\n", josh_builder_exe);
         JBVector(char *) cmds = {0};
@@ -645,14 +653,11 @@ void josh_build(const char *path, char *args[]) {
 
     if (!_jb_debug_runner) {
         remove(josh_builder_file);
-        remove(josh_builder_exe);
+        // remove(josh_builder_exe);
     }
 
     free(josh_builder_file);
     free(josh_builder_exe);
-    free(fullpath);
-    free(folder_path);
-    free(include_filepath);
 }
 
 char **josh_parse_arguments(int argc, char *argv[]) {
