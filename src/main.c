@@ -104,7 +104,7 @@ int main(int argc, char *argv[]) {
 
         JBVectorPush(&args, NULL);
 
-        josh_build(name, args.data);
+        josh_build(name, "josh_builder", args.data);
 
         free(args.data);
 
@@ -126,9 +126,15 @@ int main(int argc, char *argv[]) {
 
         JBVectorPush(&args, NULL);
 
-        josh_build(name, args.data);
+        char *filename = jb_copy_string(jb_filename(argv[index]));
+        char *ext = (char *)jb_extension(filename);
+        if (ext)
+            *(ext-1) = '_';
+
+        josh_build(name, filename, args.data);
 
         free(args.data);
+        free(filename);
         
         return 0;
     }

@@ -62,13 +62,13 @@
 #endif
 
 // Builds and runs a build.josh
-void josh_build(const char *path, char *args[]);
+void josh_build(const char *path, const char *exec_name, char *args[]);
 
 // Parsers argv arguments and applies built-in options for recoginized switches.
 // Returns a string-array with remaining arguments that we not consumed.
 char **josh_parse_arguments(int argc, char *argv[]);
 
-#define JOSH_BUILD(path, ...) josh_build(path, (char *const []){ __VA_ARGS__ __VA_OPT__(,) NULL })
+#define JOSH_BUILD(path, ...) josh_build(path, "josh_builder", (char *const []){ __VA_ARGS__ __VA_OPT__(,) NULL })
 
 #define JB_ENUM(x) JBEnum_ ## x
 
@@ -568,20 +568,19 @@ char *_jb_read_file(const char *path, size_t *out_len) {
 
 extern const char _jb_josh_build_src[];
 
-void josh_build(const char *path, char *args[]) {
+void josh_build(const char *path, const char *exec_name, char *args[]) {
     const char *build_folder = "build";
     JB_RUN(mkdir -p, build_folder);
 
     char *josh_builder_file = jb_format_string("%s/%s.c", build_folder, path);
 
-    JBExecutable josh = {"josh_builder"};
+    JBExecutable josh = {exec_name};
     josh.build_folder = build_folder;
     josh.sources = JB_STRING_ARRAY(josh_builder_file);
 
     char *josh_builder_exe = jb_format_string("%s/%s", build_folder, josh.name);
 
     if (jb_file_is_newer(path, josh_builder_exe)) {
-        printf("FILE IS NEWER %s, %s\n", path, josh_builder_file);
         char *build_source = _jb_read_file(path, NULL);
 
         JB_ASSERT(build_source, "could not read file: %s", path);
