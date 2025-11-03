@@ -16,7 +16,7 @@ int main(int argc, char *argv[]) {
 
         JBVectorPush(&args, NULL);
 
-        josh_build("tools/toolchain_builder.josh", args.data);
+        josh_build("tools/toolchain_builder.josh", "toolchain_builder", args.data);
         return 0;
     }
 
