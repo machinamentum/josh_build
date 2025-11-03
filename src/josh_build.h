@@ -572,7 +572,7 @@ void josh_build(const char *path, const char *exec_name, char *args[]) {
     const char *build_folder = "build";
     JB_RUN(mkdir -p, build_folder);
 
-    char *josh_builder_file = jb_format_string("%s/%s.c", build_folder, path);
+    char *josh_builder_file = jb_format_string("%s/%s.c", build_folder, jb_filename(path));
 
     JBExecutable josh = {exec_name};
     josh.build_folder = build_folder;
