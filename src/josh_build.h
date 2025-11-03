@@ -68,7 +68,7 @@ void josh_build(const char *path, const char *exec_name, char *args[]);
 // Returns a string-array with remaining arguments that we not consumed.
 char **josh_parse_arguments(int argc, char *argv[]);
 
-#define JOSH_BUILD(path, ...) josh_build(path, "josh_builder", (char *const []){ __VA_ARGS__ __VA_OPT__(,) NULL })
+#define JOSH_BUILD(path, exec_name, ...) josh_build(path, exec_name, (char *[]){ __VA_ARGS__ __VA_OPT__(,) NULL })
 
 #define JB_ENUM(x) JBEnum_ ## x
 
