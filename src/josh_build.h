@@ -178,7 +178,13 @@ void jb_compile_asm(JBToolchain *tc, const char *source, const char *output, con
 
 void jb_run_string(const char *cmd, char *const extra[], const char *file, int line);
 void jb_run(char *const argv[], const char *file, int line);
-char *jb_run_get_output(char *const argv[], const char *file, int line);
+
+struct JBRunResult {
+    int exit_code;
+    char *output;
+};
+
+struct JBRunResult jb_run_get_output(char *const argv[], const char *file, int line);
 
 #define JB_CMD_ARRAY(...) (char **)(const char *const []){__VA_ARGS__ __VA_OPT__(,) NULL, }
 
@@ -787,15 +793,15 @@ int _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_f
 
         if (WIFSIGNALED(wstatus)) {
             jb_log("%s:%d: %s: %s\n", file, line, argv[0], strsignal(WTERMSIG(wstatus)));
-            return 0;
+            return 1;
         }
 
         if (WEXITSTATUS(wstatus) != 0) {
             jb_log("%s:%d: %s: exit %d\n", file, line, argv[0], WEXITSTATUS(wstatus));
-            return 0;
+            return WEXITSTATUS(wstatus);
         }
 
-        return 1;
+        return WEXITSTATUS(wstatus);
     }
     else {
         // child
@@ -818,11 +824,11 @@ int _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_f
 void jb_run(char *const argv[], const char *file, int line) {
     int result = _jb_run_internal(argv, NULL, _jb_pipe_drain_log_proxy, file, line);
 
-    if (!result)
+    if (result)
         exit(1);
 }
 
-char *jb_run_get_output(char *const argv[], const char *file, int line) {
+struct JBRunResult jb_run_get_output(char *const argv[], const char *file, int line) {
     JBStringBuilder sb;
     jb_sb_init(&sb);
 
@@ -832,13 +838,13 @@ char *jb_run_get_output(char *const argv[], const char *file, int line) {
 
     jb_sb_free(&sb);
 
-    if (!result) {
-        jb_log("%s", output);
-        free(output);
-        return NULL;
-    }
+    jb_log("%s", output);
 
-    return output;
+    struct JBRunResult out;
+    out.exit_code = result;
+    out.output = output;
+
+    return out;
 }
 
 int jb_iswhitespace(int c) {
@@ -1187,7 +1193,15 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *sou
     JBVectorPush(&cmd, (char *)source);
 
     JBVectorPush(&cmd, NULL);
-    char *result = jb_run_get_output(cmd.data, __FILE__, __LINE__);
+
+    struct JBRunResult run_result = jb_run_get_output(cmd.data, __FILE__, __LINE__);
+    char *result = NULL;
+
+    if (run_result.exit_code)
+        free(run_result.output);
+    else
+        result = run_result.output;
+
 
     free(cmd.data);
 
