@@ -1590,8 +1590,9 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
     free(cmd.data);
 }
 
-void jb_build_exe(JBExecutable *exec) {
+char *_jb_library_output_file(JBLibrary *target);
 
+void jb_build_exe(JBExecutable *exec) {
     char *object_folder = jb_concat(exec->build_folder, "/object/");
 
     JBToolchain *tc = exec->toolchain ? exec->toolchain : jb_native_toolchain();
@@ -1613,7 +1614,23 @@ void jb_build_exe(JBExecutable *exec) {
 
     char *output_exec = jb_concat(exec->build_folder, jb_concat("/", exec->name));
 
-    int needs_build = _jb_need_to_build_target(output_exec, object_files);
+    int needs_build = 0;
+
+    JBNullArrayFor(exec->libraries) {
+        JBLibrary *lib = exec->libraries[index];
+        char *lib_output_exe = _jb_library_output_file(lib);
+
+        if (jb_file_is_newer(lib_output_exe, output_exec)) {
+            free(lib_output_exe);
+            needs_build = 1;
+            break;
+        }
+
+        free(lib_output_exe);
+    }
+
+    if (!needs_build)
+        needs_build = _jb_need_to_build_target(output_exec, object_files);
 
     if (needs_build) {
         _jb_link_shared(tc, link_command, exec->ldflags, output_exec, object_files, exec->libraries, 0);
@@ -1668,13 +1685,19 @@ const char *_jb_lib_suffix(JBTriple triple, int flags) {
     return "";
 }
 
+char *_jb_library_output_file(JBLibrary *target) {
+    JBToolchain *tc = target->toolchain ? target->toolchain : jb_native_toolchain();
+    char *output_exec = jb_format_string("%s/%s%s.%s", target->build_folder, _jb_lib_prefix(tc->triple), target->name, _jb_lib_suffix(tc->triple, target->flags));
+    return output_exec;
+}
+
 void jb_build_lib(JBLibrary *target) {
 
     char *object_folder = jb_concat(target->build_folder, "/object/");
 
     JBToolchain *tc = target->toolchain ? target->toolchain : jb_native_toolchain();
 
-     JBNullArrayFor(target->libraries) {
+    JBNullArrayFor(target->libraries) {
         JBLibrary *lib = target->libraries[index];
 
         JB_ASSERT(lib->toolchain == target->toolchain, "mismatch in toolchains used to build library %s and target %s", lib->name, target->name);
@@ -1689,9 +1712,25 @@ void jb_build_lib(JBLibrary *target) {
 
     char *link_command = _jb_get_link_command(tc, target->sources);
 
-    char *output_exec = jb_format_string("%s/%s%s.%s", target->build_folder, _jb_lib_prefix(tc->triple), target->name, _jb_lib_suffix(tc->triple, target->flags));
+    char *output_exec = _jb_library_output_file(target);
 
-    int needs_build = _jb_need_to_build_target(output_exec, object_files);
+    int needs_build = 0;
+
+    JBNullArrayFor(target->libraries) {
+        JBLibrary *lib = target->libraries[index];
+        char *lib_output_exe = _jb_library_output_file(lib);
+
+        if (jb_file_is_newer(lib_output_exe, output_exec)) {
+            free(lib_output_exe);
+            needs_build = 1;
+            break;
+        }
+
+        free(lib_output_exe);
+    }
+
+    if (!needs_build)
+        needs_build = _jb_need_to_build_target(output_exec, object_files);
 
     if (needs_build) {
         if (target->flags & JB_LIBRARY_SHARED) {
@@ -1700,6 +1739,8 @@ void jb_build_lib(JBLibrary *target) {
         else {
             char *triplet = jb_get_triple(tc);
             JB_ASSERT(tc->ar, "Toolchain (%s) missing AR", triplet);
+
+            JB_LOG("built %s\n", output_exec);
 
             JBVector(char *) cmd = {0};
 
