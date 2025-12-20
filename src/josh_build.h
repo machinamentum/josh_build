@@ -1573,6 +1573,16 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
     //     JBVectorPush(&cmd, "-lc");
     // }
 
+#if JB_IS_LINUX
+    // TODO more robust detection for gnu-ld
+    if (strstr(link_command, "gcc")) {
+        JBVectorPush(&cmd, "-Wl,--start-group");
+    }
+    else if(strstr(link_command, "ld")) {
+        JBVectorPush(&cmd, "---start-group");
+    }
+#endif
+
     JBNullArrayFor(ldflags) {
         JBVectorPush(&cmd, (char *)ldflags[index]);
     }
@@ -1583,6 +1593,16 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
         JBVectorPush(&cmd, jb_format_string("-L%s", lib->build_folder));
         JBVectorPush(&cmd, jb_format_string("-l%s", lib->name));
     }
+
+#if JB_IS_LINUX
+    // TODO more robust detection for gnu-ld
+    if (strstr(link_command, "gcc")) {
+        JBVectorPush(&cmd, "-Wl,--end-group");
+    }
+    else if(strstr(link_command, "ld")) {
+        JBVectorPush(&cmd, "---end-group");
+    }
+#endif
 
     JBVectorPush(&cmd, NULL);
     jb_run(cmd.data, __FILE__, __LINE__);
