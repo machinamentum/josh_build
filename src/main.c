@@ -127,6 +127,14 @@ int main(int argc, char *argv[]) {
             JB_FAIL("file not found: %s", name);
         }
 
+        char *rpath = malloc(PATH_MAX+1);
+        rpath[PATH_MAX+1] = 0;
+        if (realpath(name, rpath) == rpath) {
+            name = rpath; // @Leak
+        }
+        else
+            free(rpath);
+
         JBVector(char *) args = {0};
 
         for (int i = index+1; i < argc; i++)
