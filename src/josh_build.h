@@ -24,6 +24,11 @@
 // the returned value may be dependent on the lifetime of one of the arguments.
 // A plain pointer `char *` will require being free'd.
 
+// Additionally, if using the `josh` driver program, or by building another build.josh file
+// with josh_build(), the macro JB_BUILD_JOSH_PATH is defined to the path given as the first
+// argument to josh_build(). For the `josh` driver, this path will be the absolute/realpath
+// to the build.josh file.
+
 #ifndef JOSH_BUILD_H
 #define JOSH_BUILD_H
 
@@ -588,6 +593,8 @@ void josh_build(const char *path, const char *exec_name, char *args[]) {
         FILE *out = fopen(josh_builder_file, "wb");
         const char *preamble = "#define JOSH_BUILD_IMPL\n";
         fputs(preamble, out);
+
+        fprintf(out, "#define JB_BUILD_JOSH_PATH \"%s\"\n", path);
 
         if (!_jb_debug_runner)
             fputs("#line 1 \"josh_build.h\"\n", out);
