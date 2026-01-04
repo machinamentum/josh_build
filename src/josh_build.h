@@ -148,6 +148,8 @@ typedef struct JBLibrary {
     const char **cxxflags;
     const char **asflags;
 
+    const char **include_paths;
+
     struct JBLibrary **libraries;
 
     int flags;
@@ -170,6 +172,8 @@ typedef struct {
     const char **cxxflags;
     const char **asflags;
 
+    const char **include_paths;
+
     JBLibrary **libraries;
 
     JBToolchain *toolchain;
@@ -177,9 +181,9 @@ typedef struct {
 
 void jb_build_exe(JBExecutable *exec);
 
-void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags);
-void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, const char **cxxflags);
-void jb_compile_asm(JBToolchain *tc, const char *source, const char *output, const char **asflags);
+void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags, const char **include_paths);
+void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, const char **cxxflags, const char **include_paths);
+void jb_compile_asm(JBToolchain *tc, const char *source, const char *output, const char **asflags, const char **include_paths);
 
 void jb_run_string(const char *cmd, char *const extra[], const char *file, int line);
 void jb_run(char *const argv[], const char *file, int line);
@@ -1172,7 +1176,7 @@ enum JBRuntime _jb_runtime(const char *str) {
     return JB_ENUM(INVALID_RUNTIME);
 }
 
-char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *source, const char **cflags) {
+char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *source, const char **cflags, const char **include_paths) {
 
     char *triplet = jb_get_triple(tc);
 
@@ -1198,6 +1202,11 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *sou
 
     JBNullArrayFor(cflags) {
         JBVectorPush(&cmd, (char *)cflags[index]);
+    }
+
+    JBNullArrayFor(include_paths) {
+        JBVectorPush(&cmd, "-I");
+        JBVectorPush(&cmd, (char *)include_paths[index]);
     }
 
     JBVectorPush(&cmd, "-c");
@@ -1266,7 +1275,7 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *sou
     return out.data;
 }
 
-char **_jb_get_dependencies_asm(JBToolchain *tc, const char *tool, const char *source, const char **asflags) {
+char **_jb_get_dependencies_asm(JBToolchain *tc, const char *tool, const char *source, const char **asflags, const char **include_paths) {
     // TODO dependency tracking for assembler sources
     JBVector(char *) out = {0};
     JBVectorPush(&out, (char *)source);
@@ -1275,13 +1284,13 @@ char **_jb_get_dependencies_asm(JBToolchain *tc, const char *tool, const char *s
     return out.data;
 }
 
-void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags) {
+void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags, const char **include_paths) {
 
     char *triplet = jb_get_triple(tc);
 
     JB_ASSERT(tc->cc, "Toolchain (%s) missing C compiler", triplet);
 
-    char **deps = _jb_get_dependencies_c(tc, tc->cc, source, cflags);
+    char **deps = _jb_get_dependencies_c(tc, tc->cc, source, cflags, include_paths);
 
     int needs_build = 0;
 
@@ -1328,6 +1337,11 @@ void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const
         JBVectorPush(&cmd, (char *)cflags[index]);
     }
 
+    JBNullArrayFor(include_paths) {
+        JBVectorPush(&cmd, "-I");
+        JBVectorPush(&cmd, (char *)include_paths[index]);
+    }
+
     JBVectorPush(&cmd, "-o");
     JBVectorPush(&cmd, (char *)output);
     JBVectorPush(&cmd, "-c");
@@ -1341,13 +1355,13 @@ void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const
     free(triplet);
 }
 
-void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, const char **cflags) {
+void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, const char **cflags, const char **include_paths) {
 
     char *triplet = jb_get_triple(tc);
 
     JB_ASSERT(tc->cxx, "Toolchain (%s) missing C++ compiler", triplet);
 
-    char **deps = _jb_get_dependencies_c(tc, tc->cxx, source, cflags);
+    char **deps = _jb_get_dependencies_c(tc, tc->cxx, source, cflags, include_paths);
 
     JB_ASSERT(deps, "couldn't compute dependenices for %s", source);
 
@@ -1388,6 +1402,11 @@ void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, con
         JBVectorPush(&cmd, (char *)cflags[index]);
     }
 
+    JBNullArrayFor(include_paths) {
+        JBVectorPush(&cmd, "-I");
+        JBVectorPush(&cmd, (char *)include_paths[index]);
+    }
+
     JBVectorPush(&cmd, "-o");
     JBVectorPush(&cmd, (char *)output);
     JBVectorPush(&cmd, "-c");
@@ -1401,12 +1420,12 @@ void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, con
     free(triplet);
 }
 
-void jb_compile_asm(JBToolchain *tc, const char *source, const char *output, const char **asflags) {
+void jb_compile_asm(JBToolchain *tc, const char *source, const char *output, const char **asflags, const char **include_paths) {
     char *triplet = jb_get_triple(tc);
 
     JB_ASSERT(tc->cc, "Toolchain (%s) missing assembler", triplet);
 
-    char **deps = _jb_get_dependencies_asm(tc, tc->cc, source, asflags);
+    char **deps = _jb_get_dependencies_asm(tc, tc->cc, source, asflags, include_paths);
 
     JB_ASSERT(deps, "couldn't compute dependenices for %s", source);
 
@@ -1447,6 +1466,11 @@ void jb_compile_asm(JBToolchain *tc, const char *source, const char *output, con
         JBVectorPush(&cmd, (char *)asflags[index]);
     }
 
+    JBNullArrayFor(include_paths) {
+        JBVectorPush(&cmd, "-I");
+        JBVectorPush(&cmd, (char *)include_paths[index]);
+    }
+
     JBVectorPush(&cmd, "-o");
     JBVectorPush(&cmd, (char *)output);
     JBVectorPush(&cmd, "-c");
@@ -1469,7 +1493,7 @@ void _jb_init_build(const char *build_folder, const char *object_folder)  {
     JB_RUN_CMD("mkdir", "-p", object_folder);
 }
 
-char **_jb_collect_objects(JBToolchain *tc, const char *object_folder, const char **sources, const char **cflags, const char **cxxflags, const char **asflags) {
+char **_jb_collect_objects(JBToolchain *tc, const char *object_folder, const char **sources, const char **cflags, const char **cxxflags, const char **asflags, const char **include_paths) {
     JBVector(char *) object_files = {0};
 
     JBNullArrayFor(sources) {
@@ -1485,11 +1509,11 @@ char **_jb_collect_objects(JBToolchain *tc, const char *object_folder, const cha
         memcpy(o_ext, "o", 2); // 2 to include NULL byte
 
         if (strcmp(ext, "c") == 0)
-            jb_compile_c(tc, sources[index], object, &cflags[0]);
+            jb_compile_c(tc, sources[index], object, &cflags[0], include_paths);
         else if (strcmp(ext, "cpp") == 0)
-            jb_compile_cxx(tc, sources[index], object, &cxxflags[0]);
+            jb_compile_cxx(tc, sources[index], object, &cxxflags[0], include_paths);
         else if (strcmp(ext, "s") == 0)
-            jb_compile_asm(tc, sources[index], object, &asflags[0]);
+            jb_compile_asm(tc, sources[index], object, &asflags[0], include_paths);
 
         JBVectorPush(&object_files, object);
     }
@@ -1635,7 +1659,7 @@ void jb_build_exe(JBExecutable *exec) {
 
     _jb_init_build(exec->build_folder, object_folder);
 
-    char **object_files = _jb_collect_objects(tc, object_folder, exec->sources, exec->cflags, exec->cxxflags, exec->asflags);
+    char **object_files = _jb_collect_objects(tc, object_folder, exec->sources, exec->cflags, exec->cxxflags, exec->asflags, exec->include_paths);
 
     char *link_command = _jb_get_link_command(tc, exec->sources);
 
@@ -1735,7 +1759,7 @@ void jb_build_lib(JBLibrary *target) {
 
     _jb_init_build(target->build_folder, object_folder);
 
-    char **object_files = _jb_collect_objects(tc, object_folder, target->sources, target->cflags, target->cxxflags, target->asflags);
+    char **object_files = _jb_collect_objects(tc, object_folder, target->sources, target->cflags, target->cxxflags, target->asflags, target->include_paths);
 
     char *link_command = _jb_get_link_command(tc, target->sources);
 
