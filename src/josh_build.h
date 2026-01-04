@@ -133,28 +133,29 @@ char *jb_get_triple(JBToolchain *toolchain);
 // Find a tool in the target toolchains directory
 char *jb_toolchain_find_tool(JBToolchain *toolchain, const char *tool);
 
+#define _JB_TARGET_HEADER_COMMON \
+    const char *name; \
+    const char *build_folder; \
+    const char **sources; \
+    const char **ldflags; /* ignored for static libraries */ \
+    const char **cflags; \
+    const char **cxxflags; \
+    const char **asflags; \
+    const char **include_paths; \
+    struct JBLibrary **libraries; \
+    JBToolchain *toolchain
+
+typedef struct JBTarget {
+    _JB_TARGET_HEADER_COMMON;
+} JBTarget;
+
 #define JB_LIBRARY_STATIC (0 << 0)
 #define JB_LIBRARY_SHARED (1 << 0)
 
 typedef struct JBLibrary {
-    const char *name;
-    const char **sources;
-
-    const char *build_folder;
-
-    const char **ldflags; // ignored for static libraries
-
-    const char **cflags;
-    const char **cxxflags;
-    const char **asflags;
-
-    const char **include_paths;
-
-    struct JBLibrary **libraries;
+    _JB_TARGET_HEADER_COMMON;
 
     int flags;
-
-    JBToolchain *toolchain;
 } JBLibrary;
 
 void jb_build_lib(JBLibrary *lib);
@@ -162,28 +163,14 @@ void jb_build_lib(JBLibrary *lib);
 #define JB_LIBRARY_ARRAY(...) (JBLibrary *[]){ __VA_ARGS__, NULL }
 
 typedef struct {
-    const char *name;
-    const char **sources;
-
-    const char *build_folder;
-
-    const char **ldflags;
-    const char **cflags;
-    const char **cxxflags;
-    const char **asflags;
-
-    const char **include_paths;
-
-    JBLibrary **libraries;
-
-    JBToolchain *toolchain;
+    _JB_TARGET_HEADER_COMMON;
 } JBExecutable;
 
 void jb_build_exe(JBExecutable *exec);
 
-void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags, const char **include_paths);
-void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, const char **cxxflags, const char **include_paths);
-void jb_compile_asm(JBToolchain *tc, const char *source, const char *output, const char **asflags, const char **include_paths);
+void jb_compile_c(JBTarget *target, JBToolchain *tc, const char *source, const char *output);
+void jb_compile_cxx(JBTarget *target, JBToolchain *tc, const char *source, const char *output);
+void jb_compile_asm(JBTarget *target, JBToolchain *tc, const char *source, const char *output);
 
 void jb_run_string(const char *cmd, char *const extra[], const char *file, int line);
 void jb_run(char *const argv[], const char *file, int line);
@@ -1284,7 +1271,9 @@ char **_jb_get_dependencies_asm(JBToolchain *tc, const char *tool, const char *s
     return out.data;
 }
 
-void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const char **cflags, const char **include_paths) {
+void jb_compile_c(JBTarget *target, JBToolchain *tc, const char *source, const char *output) {
+    const char **cflags = target->cflags;
+    const char **include_paths = target->include_paths;
 
     char *triplet = jb_get_triple(tc);
 
@@ -1355,13 +1344,15 @@ void jb_compile_c(JBToolchain *tc, const char *source, const char *output, const
     free(triplet);
 }
 
-void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, const char **cflags, const char **include_paths) {
+void jb_compile_cxx(JBTarget *target, JBToolchain *tc, const char *source, const char *output) {
+    const char **cxxflags = target->cxxflags;
+    const char **include_paths = target->include_paths;
 
     char *triplet = jb_get_triple(tc);
 
     JB_ASSERT(tc->cxx, "Toolchain (%s) missing C++ compiler", triplet);
 
-    char **deps = _jb_get_dependencies_c(tc, tc->cxx, source, cflags, include_paths);
+    char **deps = _jb_get_dependencies_c(tc, tc->cxx, source, cxxflags, include_paths);
 
     JB_ASSERT(deps, "couldn't compute dependenices for %s", source);
 
@@ -1398,8 +1389,8 @@ void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, con
         JBVectorPush(&cmd, tc->sysroot);
     }
 
-    JBNullArrayFor(cflags) {
-        JBVectorPush(&cmd, (char *)cflags[index]);
+    JBNullArrayFor(cxxflags) {
+        JBVectorPush(&cmd, (char *)cxxflags[index]);
     }
 
     JBNullArrayFor(include_paths) {
@@ -1420,7 +1411,10 @@ void jb_compile_cxx(JBToolchain *tc, const char *source, const char *output, con
     free(triplet);
 }
 
-void jb_compile_asm(JBToolchain *tc, const char *source, const char *output, const char **asflags, const char **include_paths) {
+void jb_compile_asm(JBTarget *target, JBToolchain *tc, const char *source, const char *output) {
+    const char **asflags = target->asflags;
+    const char **include_paths = target->include_paths;
+
     char *triplet = jb_get_triple(tc);
 
     JB_ASSERT(tc->cc, "Toolchain (%s) missing assembler", triplet);
@@ -1493,7 +1487,9 @@ void _jb_init_build(const char *build_folder, const char *object_folder)  {
     JB_RUN_CMD("mkdir", "-p", object_folder);
 }
 
-char **_jb_collect_objects(JBToolchain *tc, const char *object_folder, const char **sources, const char **cflags, const char **cxxflags, const char **asflags, const char **include_paths) {
+char **_jb_collect_objects(JBTarget *target, JBToolchain *tc, const char *object_folder) {
+    const char **sources = target->sources;
+
     JBVector(char *) object_files = {0};
 
     JBNullArrayFor(sources) {
@@ -1509,11 +1505,11 @@ char **_jb_collect_objects(JBToolchain *tc, const char *object_folder, const cha
         memcpy(o_ext, "o", 2); // 2 to include NULL byte
 
         if (strcmp(ext, "c") == 0)
-            jb_compile_c(tc, sources[index], object, &cflags[0], include_paths);
+            jb_compile_c(target, tc, sources[index], object);
         else if (strcmp(ext, "cpp") == 0)
-            jb_compile_cxx(tc, sources[index], object, &cxxflags[0], include_paths);
+            jb_compile_cxx(target, tc, sources[index], object);
         else if (strcmp(ext, "s") == 0)
-            jb_compile_asm(tc, sources[index], object, &asflags[0], include_paths);
+            jb_compile_asm(target, tc, sources[index], object);
 
         JBVectorPush(&object_files, object);
     }
@@ -1659,7 +1655,7 @@ void jb_build_exe(JBExecutable *exec) {
 
     _jb_init_build(exec->build_folder, object_folder);
 
-    char **object_files = _jb_collect_objects(tc, object_folder, exec->sources, exec->cflags, exec->cxxflags, exec->asflags, exec->include_paths);
+    char **object_files = _jb_collect_objects((JBTarget *)exec, tc, object_folder);
 
     char *link_command = _jb_get_link_command(tc, exec->sources);
 
@@ -1759,7 +1755,7 @@ void jb_build_lib(JBLibrary *target) {
 
     _jb_init_build(target->build_folder, object_folder);
 
-    char **object_files = _jb_collect_objects(tc, object_folder, target->sources, target->cflags, target->cxxflags, target->asflags, target->include_paths);
+    char **object_files = _jb_collect_objects((JBTarget *)target, tc, object_folder);
 
     char *link_command = _jb_get_link_command(tc, target->sources);
 
