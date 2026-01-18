@@ -693,6 +693,7 @@ char **josh_parse_arguments(int argc, char *argv[]) {
         }
     }
 
+    JBVectorPush(&out, NULL);
     return out.data;
 }
 
