@@ -142,6 +142,7 @@ char *jb_toolchain_find_tool(JBToolchain *toolchain, const char *tool);
     const char **cxxflags; \
     const char **asflags; \
     const char **include_paths; \
+    const char **frameworks; /* only applies to apple targets */ \
     struct JBLibrary **libraries; \
     JBToolchain *toolchain
 
@@ -1164,6 +1165,10 @@ enum JBRuntime _jb_runtime(const char *str) {
     return JB_ENUM(INVALID_RUNTIME);
 }
 
+int _jb_is_objc_ext(const char *ext) {
+    return strcmp(ext, "m") == 0 || strcmp(ext, "mm") == 0;
+}
+
 char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *source, const char **cflags, const char **include_paths) {
 
     char *triplet = jb_get_triple(tc);
@@ -1275,6 +1280,8 @@ char **_jb_get_dependencies_asm(JBToolchain *tc, const char *tool, const char *s
 void jb_compile_c(JBTarget *target, JBToolchain *tc, const char *source, const char *output) {
     const char **cflags = target->cflags;
     const char **include_paths = target->include_paths;
+    const char **frameworks = target->frameworks;
+    const char *ext = jb_extension(source);
 
     char *triplet = jb_get_triple(tc);
 
@@ -1337,6 +1344,13 @@ void jb_compile_c(JBTarget *target, JBToolchain *tc, const char *source, const c
     JBVectorPush(&cmd, "-c");
     JBVectorPush(&cmd, (char *)source);
 
+    if (_jb_is_objc_ext(ext) && tc->triple.vendor == JB_ENUM(Apple)) {
+        JBNullArrayFor(frameworks) {
+            JBVectorPush(&cmd, "-framework");
+            JBVectorPush(&cmd, (char *)frameworks[index]);
+        }
+    }
+
     JBVectorPush(&cmd, NULL);
     jb_run(cmd.data, __FILE__, __LINE__);
 
@@ -1348,6 +1362,8 @@ void jb_compile_c(JBTarget *target, JBToolchain *tc, const char *source, const c
 void jb_compile_cxx(JBTarget *target, JBToolchain *tc, const char *source, const char *output) {
     const char **cxxflags = target->cxxflags;
     const char **include_paths = target->include_paths;
+    const char **frameworks = target->frameworks;
+    const char *ext = jb_extension(source);
 
     char *triplet = jb_get_triple(tc);
 
@@ -1355,13 +1371,19 @@ void jb_compile_cxx(JBTarget *target, JBToolchain *tc, const char *source, const
 
     char **deps = _jb_get_dependencies_c(tc, tc->cxx, source, cxxflags, include_paths);
 
-    JB_ASSERT(deps, "couldn't compute dependenices for %s", source);
-
     int needs_build = 0;
-    JBNullArrayFor(deps) {
-        if (jb_file_is_newer(deps[index], output)) {
-            needs_build = 1;
-            break;
+
+    if (!deps) {
+        jb_log("couldn't compute dependenices for %s, rebuilding...\n", source);
+        needs_build = 1;
+    }
+
+    if (!needs_build) {
+        JBNullArrayFor(deps) {
+            if (jb_file_is_newer(deps[index], output)) {
+                needs_build = 1;
+                break;
+            }
         }
     }
 
@@ -1403,6 +1425,13 @@ void jb_compile_cxx(JBTarget *target, JBToolchain *tc, const char *source, const
     JBVectorPush(&cmd, (char *)output);
     JBVectorPush(&cmd, "-c");
     JBVectorPush(&cmd, (char *)source);
+
+    if (_jb_is_objc_ext(ext) && tc->triple.vendor == JB_ENUM(Apple)) {
+        JBNullArrayFor(frameworks) {
+            JBVectorPush(&cmd, "-framework");
+            JBVectorPush(&cmd, (char *)frameworks[index]);
+        }
+    }
 
     JBVectorPush(&cmd, NULL);
     jb_run(cmd.data, __FILE__, __LINE__);
@@ -1480,7 +1509,9 @@ void jb_compile_asm(JBTarget *target, JBToolchain *tc, const char *source, const
 }
 
 int _jb_supported_source_ext(const char *ext) {
-    return strcmp(ext, "c") == 0 || strcmp(ext, "cpp") == 0 || strcmp(ext, "s") == 0;
+    return strcmp(ext, "c") == 0 || strcmp(ext, "cpp") == 0
+        || strcmp(ext, "m") == 0 || strcmp(ext, "mm") == 0
+        || strcmp(ext, "s") == 0;
 }
 
 void _jb_init_build(const char *build_folder, const char *object_folder)  {
@@ -1505,9 +1536,9 @@ char **_jb_collect_objects(JBTarget *target, JBToolchain *tc, const char *object
         char *o_ext = object+strlen(object)-strlen(ext);
         memcpy(o_ext, "o", 2); // 2 to include NULL byte
 
-        if (strcmp(ext, "c") == 0)
+        if (strcmp(ext, "c") == 0 || strcmp(ext, "m") == 0)
             jb_compile_c(target, tc, sources[index], object);
-        else if (strcmp(ext, "cpp") == 0)
+        else if (strcmp(ext, "cpp") == 0 || strcmp(ext, "mm") == 0)
             jb_compile_cxx(target, tc, sources[index], object);
         else if (strcmp(ext, "s") == 0)
             jb_compile_asm(target, tc, sources[index], object);
@@ -1551,7 +1582,7 @@ int _jb_need_to_build_target(const char *target, char **object_files) {
     return 0;
 }
 
-void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldflags, char *output_exec, char **object_files, JBLibrary **libs, int is_lib) {
+void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldflags, const char **frameworks, char *output_exec, char **object_files, JBLibrary **libs, int is_lib) {
 
     char *triplet = jb_get_triple(tc);
 
@@ -1602,7 +1633,7 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
     // }
 
 #if JB_IS_LINUX
-    // TODO more robust detection for gnu-ld
+    // TODO more robust detection for gnu-ld and target-triple + toolchain
     if (strstr(link_command, "gcc")) {
         JBVectorPush(&cmd, "-Wl,--start-group");
     }
@@ -1623,7 +1654,7 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
     }
 
 #if JB_IS_LINUX
-    // TODO more robust detection for gnu-ld
+    // TODO more robust detection for gnu-ld and target-triple + toolchain
     if (strstr(link_command, "gcc")) {
         JBVectorPush(&cmd, "-Wl,--end-group");
     }
@@ -1631,6 +1662,13 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
         JBVectorPush(&cmd, "---end-group");
     }
 #endif
+
+    if (tc->triple.vendor == JB_ENUM(Apple)) {
+        JBNullArrayFor(frameworks) {
+            JBVectorPush(&cmd, "-framework");
+            JBVectorPush(&cmd, (char *)frameworks[index]);
+        }
+    }
 
     JBVectorPush(&cmd, NULL);
     jb_run(cmd.data, __FILE__, __LINE__);
@@ -1681,7 +1719,7 @@ void jb_build_exe(JBExecutable *exec) {
         needs_build = _jb_need_to_build_target(output_exec, object_files);
 
     if (needs_build) {
-        _jb_link_shared(tc, link_command, exec->ldflags, output_exec, object_files, exec->libraries, 0);
+        _jb_link_shared(tc, link_command, exec->ldflags, exec->frameworks, output_exec, object_files, exec->libraries, 0);
     }
 
     JBNullArrayFor(object_files)
@@ -1782,7 +1820,7 @@ void jb_build_lib(JBLibrary *target) {
 
     if (needs_build) {
         if (target->flags & JB_LIBRARY_SHARED) {
-            _jb_link_shared(tc, link_command, target->ldflags, output_exec, object_files, target->libraries, 1);
+            _jb_link_shared(tc, link_command, target->ldflags, target->frameworks, output_exec, object_files, target->libraries, 1);
         }
         else {
             char *triplet = jb_get_triple(tc);
