@@ -1280,8 +1280,6 @@ char **_jb_get_dependencies_asm(JBToolchain *tc, const char *tool, const char *s
 void jb_compile_c(JBTarget *target, JBToolchain *tc, const char *source, const char *output) {
     const char **cflags = target->cflags;
     const char **include_paths = target->include_paths;
-    const char **frameworks = target->frameworks;
-    const char *ext = jb_extension(source);
 
     char *triplet = jb_get_triple(tc);
 
@@ -1344,13 +1342,6 @@ void jb_compile_c(JBTarget *target, JBToolchain *tc, const char *source, const c
     JBVectorPush(&cmd, "-c");
     JBVectorPush(&cmd, (char *)source);
 
-    if (_jb_is_objc_ext(ext) && tc->triple.vendor == JB_ENUM(Apple)) {
-        JBNullArrayFor(frameworks) {
-            JBVectorPush(&cmd, "-framework");
-            JBVectorPush(&cmd, (char *)frameworks[index]);
-        }
-    }
-
     JBVectorPush(&cmd, NULL);
     jb_run(cmd.data, __FILE__, __LINE__);
 
@@ -1362,8 +1353,6 @@ void jb_compile_c(JBTarget *target, JBToolchain *tc, const char *source, const c
 void jb_compile_cxx(JBTarget *target, JBToolchain *tc, const char *source, const char *output) {
     const char **cxxflags = target->cxxflags;
     const char **include_paths = target->include_paths;
-    const char **frameworks = target->frameworks;
-    const char *ext = jb_extension(source);
 
     char *triplet = jb_get_triple(tc);
 
@@ -1425,13 +1414,6 @@ void jb_compile_cxx(JBTarget *target, JBToolchain *tc, const char *source, const
     JBVectorPush(&cmd, (char *)output);
     JBVectorPush(&cmd, "-c");
     JBVectorPush(&cmd, (char *)source);
-
-    if (_jb_is_objc_ext(ext) && tc->triple.vendor == JB_ENUM(Apple)) {
-        JBNullArrayFor(frameworks) {
-            JBVectorPush(&cmd, "-framework");
-            JBVectorPush(&cmd, (char *)frameworks[index]);
-        }
-    }
 
     JBVectorPush(&cmd, NULL);
     jb_run(cmd.data, __FILE__, __LINE__);
