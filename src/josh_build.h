@@ -1533,23 +1533,34 @@ char **_jb_collect_objects(JBTarget *target, JBToolchain *tc, const char *object
     return object_files.data;
 }
 
-char *_jb_get_link_command(JBToolchain *tc, const char **sources) {
-
-    char *link_command = tc->cc;
+int _jb_target_has_cpp_source(JBTarget *target) {
+    const char **sources = target->sources;
 
     JBNullArrayFor(sources) {
         const char *ext = jb_extension(sources[index]);
 
         JB_ASSERT(ext && _jb_supported_source_ext(ext), "unsupported file type: %s", ext ? ext : "unknown");
 
-        if (strcmp(ext, "c") == 0) {
-
-        }
-        else if (strcmp(ext, "cpp") == 0) {
-            link_command = tc->cxx;
-            break;
+        if (strcmp(ext, "cpp") == 0 || strcmp(ext, "mm") == 0) {
+            return 1;
         }
     }
+
+    JBNullArrayFor(target->libraries) {
+        JBLibrary *lib = target->libraries[index];
+
+        if (_jb_target_has_cpp_source((JBTarget *)lib))
+            return 1;
+    }
+
+    return 0;
+}
+
+char *_jb_get_link_command(JBToolchain *tc, JBTarget *target) {
+    char *link_command = tc->cc;
+
+    if (_jb_target_has_cpp_source(target))
+        link_command = tc->cxx;
 
     return link_command;
 }
@@ -1678,7 +1689,7 @@ void jb_build_exe(JBExecutable *exec) {
 
     char **object_files = _jb_collect_objects((JBTarget *)exec, tc, object_folder);
 
-    char *link_command = _jb_get_link_command(tc, exec->sources);
+    char *link_command = _jb_get_link_command(tc, (JBTarget *)exec);
 
     char *output_exec = jb_concat(exec->build_folder, jb_concat("/", exec->name));
 
@@ -1778,7 +1789,7 @@ void jb_build_lib(JBLibrary *target) {
 
     char **object_files = _jb_collect_objects((JBTarget *)target, tc, object_folder);
 
-    char *link_command = _jb_get_link_command(tc, target->sources);
+    char *link_command = _jb_get_link_command(tc, (JBTarget *)target);
 
     char *output_exec = _jb_library_output_file(target);
 
