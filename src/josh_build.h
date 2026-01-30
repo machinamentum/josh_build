@@ -1424,6 +1424,11 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *sou
     if (!result)
         return NULL;
 
+    if (is_msvc) {
+        // TODO implement parsing for MSVC /sourceDependencies JSON output
+        return NULL;
+    }
+
     for (int i = 0; result[i]; i++) {
         char n = result[i+1];
         if (result[i] == '\\' && (n == '\r' || n == '\n')) {
