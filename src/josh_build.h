@@ -1398,7 +1398,7 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *sou
     JBVectorPush(&cmd, (char *)tool);
 
     if (is_msvc) {
-        JBVectorPush(&cmd, "/sourceDependencies");
+        JBVectorPush(&cmd, "/sourceDependencies-"); // '-' at the end dumps to stdout
     }
     else {
         JBVectorPush(&cmd, "-MM");
