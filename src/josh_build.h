@@ -53,11 +53,21 @@
 #define JB_IS_LINUX 1
 #define JB_DEFAULT_VENDOR JB_ENUM(Linux)
 #define JB_DEFAULT_RUNTIME JB_ENUM(GNU)
-#elif defined(WIN32)
+#elif defined(_WIN32)
 #undef  JB_IS_WINDOWS
 #define JB_IS_WINDOWS 1
 #define JB_DEFAULT_VENDOR JB_ENUM(Windows)
 #define JB_DEFAULT_RUNTIME JB_ENUM(MSVC)
+#endif
+
+#if JB_IS_WINDOWS
+#define JB_PATH_SEPARATOR '/'
+#define JB_DEBUG_BREAK() DebugBreak()
+#define _jb_typeof(x) __typeof__(x)
+#else
+#define JB_PATH_SEPARATOR '/'
+#define JB_DEBUG_BREAK() __builtin_debugtrap()
+#define _jb_typeof(x) typeof(x)
 #endif
 
 #if (__x86_64__) || (_M_AMD64)
@@ -210,12 +220,12 @@ int jb_file_exists(const char *path);
 
 char *jb_file_fullpath(const char *path);
 
+void jb_mkdir(const char *path);
+
 // Generates #embed-style text in output_file based on the contents of input_file
 void jb_generate_embed(const char *input_file, const char *output_file);
 
 char *jb_getcwd();
-
-struct timespec jb_get_last_mod_time(const char *path);
 
 // Return 1 if source-file was last modified after dest-file.
 // Fails if source doesnt exist.
@@ -243,7 +253,7 @@ static inline void jb_array_push(JBArrayGeneric *arr, void *src, int tsize) {
 
 #define JBArrayPush(x, v) \
     { \
-        typeof(*(x)->data) _JB_ARRAY_TMP_NAME(tmp, __LINE__) = (v); \
+        _jb_typeof(*(x)->data) _JB_ARRAY_TMP_NAME(tmp, __LINE__) = (v); \
         jb_array_push(&(x)->generic, &_JB_ARRAY_TMP_NAME(tmp, __LINE__), sizeof(*(x)->data)); \
     }
 
@@ -260,7 +270,7 @@ static inline void jb_array_push(JBArrayGeneric *arr, void *src, int tsize) {
     for (size_t index = 0; index < (x)->count; index++)
 
 #define JBArrayForEach(x) \
-    for (typeof((x)->data) it = (x)->data; it < ((x)->data + (x)->count); it += 1)
+    for (_jb_typeof((x)->data) it = (x)->data; it < ((x)->data + (x)->count); it += 1)
 
 typedef struct {
     void *data;
@@ -301,7 +311,7 @@ static inline void jb_vector_push(JBVectorGeneric *vec, void *src, int tsize) {
 
 #define JBVectorPush(x, v) \
     { \
-        typeof(*(x)->data) _JB_ARRAY_TMP_NAME(tmp, __LINE__) = (v); \
+        _jb_typeof(*(x)->data) _JB_ARRAY_TMP_NAME(tmp, __LINE__) = (v); \
         jb_vector_push(&(x)->generic, &_JB_ARRAY_TMP_NAME(tmp, __LINE__), sizeof(*(x)->data)); \
     }
 #define JBVectorRemove(x, index) JBArrayRemove(x, index)
@@ -312,6 +322,11 @@ static inline void jb_vector_push(JBVectorGeneric *vec, void *src, int tsize) {
         JBVectorRemove((x), (x)->count-1); \
     }
 
+#define JBVectorFor(x) \
+    for (size_t index = 0; index < (x)->count; ++index)
+
+#define JBVectorForReverse(x) \
+    for (size_t index = (x)->count-1; index < (x)->count; --index)
 
 #define JB_FAIL(msg, ...) do { jb_log_print(msg "\n" __VA_OPT__(,) __VA_ARGS__); exit(1); } while(0)
 
@@ -352,10 +367,13 @@ void jb_log_print(const char *fmt, ...);
 
 #include <string.h>
 
-#include <unistd.h>
-
 #include <fcntl.h>
-#include <poll.h>
+
+#if JB_IS_WINDOWS
+
+#include <Windows.h>
+
+#else
 
 #if JB_IS_MACOS
 #include <util.h>
@@ -363,10 +381,15 @@ void jb_log_print(const char *fmt, ...);
 #include <pty.h>
 #endif
 
+#include <poll.h>
+#include <unistd.h>
+
 #include <sys/wait.h>
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/errno.h>
+
+#endif // JB_IS_WINDOWS
 
 int _jb_log_print_only = 0;
 int _jb_verbose_show_commands = 0;
@@ -508,7 +531,11 @@ void jb_va_log(const char *fmt, va_list args) {
         free(out);
     }
 
+#if JB_IS_WINDOWS
+    _commit(_jb_log_fd);
+#else
     fsync(_jb_log_fd);
+#endif
 }
 
 void jb_log(const char *fmt, ...) {
@@ -567,7 +594,7 @@ extern const char _jb_josh_build_src[];
 
 void josh_build(const char *path, const char *exec_name, char *args[]) {
     const char *build_folder = "build";
-    JB_RUN(mkdir -p, build_folder);
+    jb_mkdir(build_folder);
 
     char *josh_builder_file = jb_format_string("%s/%s.c", build_folder, jb_filename(path));
 
@@ -583,6 +610,8 @@ void josh_build(const char *path, const char *exec_name, char *args[]) {
         JB_ASSERT(build_source, "could not read file: %s", path);
 
         FILE *out = fopen(josh_builder_file, "wb");
+        JB_ASSERT(out, "could not generate josh-builder file %s\n", josh_builder_file);
+
         const char *preamble = "#define JOSH_BUILD_IMPL\n";
         fputs(preamble, out);
 
@@ -620,8 +649,8 @@ void josh_build(const char *path, const char *exec_name, char *args[]) {
 
         char *fullpath = jb_file_fullpath(path);
         char *folder_path = fullpath ? jb_drop_last_path_component(fullpath) : NULL;
-        char *include_filepath = folder_path ? jb_format_string("-I%s", folder_path) : NULL;
-        josh.cflags = JB_STRING_ARRAY(include_filepath);
+        josh.cflags = JB_STRING_ARRAY(JB_IS_WINDOWS ? "/std:c11" : NULL);
+        josh.include_paths = JB_STRING_ARRAY(folder_path);
 
         if (_jb_debug_runner)
             josh.cflags = JB_STRING_ARRAY("-g");
@@ -630,7 +659,6 @@ void josh_build(const char *path, const char *exec_name, char *args[]) {
 
         free(fullpath);
         free(folder_path);
-        free(include_filepath);
     }
 
     {
@@ -707,6 +735,151 @@ void _jb_pipe_drain_log_proxy(void *context, const char *str) {
 void _jb_pipe_drain_sb_proxy(void *context, const char *str) {
     jb_sb_puts((JBStringBuilder *)context, str);
 }
+
+#if JB_IS_WINDOWS
+
+int _jb_pipe_read_would_not_block(HANDLE fd) {
+    DWORD bytes_available = 0;
+    BOOL result = PeekNamedPipe(fd, NULL, 0, NULL, &bytes_available, NULL);
+
+    if (!result) {
+        jb_log_print("could not peek pipe\n");
+        return 0;
+    }
+
+    return bytes_available > 0;
+}
+
+int _jb_pipe_has_data(HANDLE fd) {
+    if (!_jb_pipe_read_would_not_block(fd))
+        return 0;
+
+    char c;
+    DWORD bytes = 0;
+    return ReadFile(fd, &c, 1, &bytes, NULL) && bytes > 0;
+}
+
+void _jb_drain_pipe(HANDLE fd, void *context, _JBDrainPipeFn fn) {
+    enum { buffer_size = 4096*2 };
+    char buffer[buffer_size];
+
+    while (_jb_pipe_read_would_not_block(fd)) {
+        DWORD bytes = 0;
+        BOOL result = ReadFile(fd, buffer, buffer_size-1, &bytes, NULL);
+
+        if (!result)
+            break;
+
+        if (bytes <= 0)
+            break;
+
+        if (bytes > 0) {
+            buffer[bytes] = 0;
+            fn(context, buffer);
+        }
+    }
+}
+
+int _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_fn, const char *file, int line) {
+    if (_jb_verbose_show_commands) {
+        JBNullArrayFor(argv) {
+            jb_log_print("%s ", argv[index]);
+        }
+
+        jb_log_print("\n");
+    }
+
+    char *cmdline = NULL;
+    {
+        JBStringBuilder sb = {};
+        jb_sb_init(&sb);
+
+        JBNullArrayFor(argv) {
+            jb_sb_puts(&sb, argv[index]);
+            jb_sb_putchar(&sb, ' ');
+        }
+
+        cmdline = jb_sb_to_string(&sb);
+
+        jb_sb_free(&sb);
+    }
+
+    int pty = _jb_use_pty;
+    // TODO see if ConPTY is needed for some things
+    // On mac/Linux, pty mode is needed to get the child process to output colored text controls
+    // since if it cannot detect a terminal, it assumes output is redirected to a file
+    SECURITY_ATTRIBUTES security_attr = {};
+    security_attr.nLength = sizeof(SECURITY_ATTRIBUTES);
+    security_attr.bInheritHandle = TRUE;
+
+    HANDLE output_read = NULL;
+    HANDLE output_write = NULL;
+
+    HANDLE input_read = NULL;
+    HANDLE input_write = NULL;
+
+    if (!CreatePipe(&output_read, &output_write, &security_attr, 0)) {
+        jb_log_print("could not create output pipe for %s\n", argv[0]);
+        return 1;
+    }
+
+    if (!SetHandleInformation(output_read, HANDLE_FLAG_INHERIT, 0)) {
+        jb_log_print("could not set output pipe flag for %s\n", argv[0]);
+        return 1;
+    }
+
+    if (!CreatePipe(&input_read, &input_write, &security_attr, 0)) {
+        jb_log_print("could not create input pipe for %s\n", argv[0]);
+        return 1;
+    }
+
+     if (!SetHandleInformation(input_write, HANDLE_FLAG_INHERIT, 0)) {
+        jb_log_print("could not set input pipe flag for %s\n", argv[0]);
+        return 1;
+    }
+
+    STARTUPINFOA startup_info = {};
+    startup_info.cb = sizeof(STARTUPINFOA);
+    startup_info.dwFlags |= STARTF_USESTDHANDLES;
+    startup_info.hStdInput = input_read;
+    startup_info.hStdOutput = output_write;
+    startup_info.hStdError = output_write;
+
+    PROCESS_INFORMATION process_info = {};
+
+    if (!CreateProcessA(NULL, cmdline, NULL, NULL,
+                        TRUE, NORMAL_PRIORITY_CLASS, NULL, NULL,
+                        &startup_info, &process_info)) {
+        // TODO call GetLastError and report
+        jb_log_print("Could not run %s, error ID 0x%X\n", argv[0], GetLastError());
+        free(cmdline);
+        return 1;
+    }
+
+    free(cmdline);
+
+    do {
+        _jb_drain_pipe(output_read, print_ctx, print_fn);
+    } while (WaitForSingleObject(process_info.hProcess, 0) != WAIT_OBJECT_0);
+
+    _jb_drain_pipe(output_read, print_ctx, print_fn);
+    JB_ASSERT(!_jb_pipe_has_data(output_read), "data still in pipe");
+
+    DWORD exit_code = 0;
+    if (!GetExitCodeProcess(process_info.hProcess, &exit_code)) {
+        jb_log_print("Could not get process exit code for %s\n", argv[0]);
+        return 1;
+    }
+
+    CloseHandle(process_info.hProcess);
+    CloseHandle(process_info.hThread);
+
+    CloseHandle(output_write);
+    CloseHandle(input_read);
+    return exit_code;
+}
+
+#else
 
 int _jb_pipe_read_would_not_block(int fd) {
     struct pollfd pfd = { .fd = fd, .events = POLLIN };
@@ -824,6 +997,8 @@ int _jb_run_internal(char *const argv[], void *print_ctx, _JBDrainPipeFn print_f
         exit(1);
     }
 }
+
+#endif // JB_IS_WINDOWS
 
 void jb_run(char *const argv[], const char *file, int line) {
     int result = _jb_run_internal(argv, NULL, _jb_pipe_drain_log_proxy, file, line);
@@ -1035,7 +1210,7 @@ char *jb_format_string(const char *fmt, ...) {
 }
 
 const char *jb_filename(const char *path) {
-    char *slash = strrchr(path, '/');
+    char *slash = strrchr(path, JB_PATH_SEPARATOR);
 
     if (slash) {
         char *out = slash+1;
@@ -1061,7 +1236,7 @@ const char *jb_extension(const char *path) {
 }
 
 char *jb_drop_last_path_component(const char *path) {
-    char *slash = strrchr(path, '/');
+    char *slash = strrchr(path, JB_PATH_SEPARATOR);
 
     if (slash) {
         char *end = slash;
@@ -1169,40 +1344,68 @@ int _jb_is_objc_ext(const char *ext) {
     return strcmp(ext, "m") == 0 || strcmp(ext, "mm") == 0;
 }
 
-char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *source, const char **cflags, const char **include_paths) {
-
+typedef JBVector(char *) _JBCommandVector;
+void _jb_add_common_c_options(JBToolchain *tc, _JBCommandVector *cmd, const char *tool, const char **cflags, const char **include_paths) {
     char *triplet = jb_get_triple(tc);
+    int is_msvc = (tc->triple.vendor == JB_ENUM(Windows));
 
-    JBVector(char *) cmd = {0};
-
-    JBVectorPush(&cmd, (char *)tool);
-
-    JBVectorPush(&cmd, "-MM");
+    if (is_msvc) {
+        JBVectorPush(cmd, "/nologo");
+    }
 
     if (triplet && strstr(tool, "clang") != NULL) {
-        JBVectorPush(&cmd, "-target");
-        JBVectorPush(&cmd, triplet);
+        JBVectorPush(cmd, "-target");
+        JBVectorPush(cmd, triplet);
 
-        // JBVectorPush(&cmd, "--rtlib=compiler-rt");
+        // JBVectorPush(cmd, "--rtlib=compiler-rt");
     }
+
 
     if (tc->sysroot) {
         // TODO check if Apple LD or GNU LD
-        // JBVectorPush(&cmd, "-syslibroot");
-        JBVectorPush(&cmd, "--sysroot");
-        JBVectorPush(&cmd, tc->sysroot);
+        // JBVectorPush(cmd, "-syslibroot");
+        JBVectorPush(cmd, "--sysroot");
+        JBVectorPush(cmd, tc->sysroot);
     }
 
     JBNullArrayFor(cflags) {
-        JBVectorPush(&cmd, (char *)cflags[index]);
+        JBVectorPush(cmd, (char *)cflags[index]);
     }
 
     JBNullArrayFor(include_paths) {
-        JBVectorPush(&cmd, "-I");
-        JBVectorPush(&cmd, (char *)include_paths[index]);
+        if (is_msvc) {
+            JBVectorPush(cmd, "/I");
+        }
+        else {
+            JBVectorPush(cmd, "-I");
+        }
+        JBVectorPush(cmd, (char *)include_paths[index]);
     }
 
-    JBVectorPush(&cmd, "-c");
+    if (is_msvc) {
+        JBVectorPush(cmd, "/c");
+    }
+    else {
+        JBVectorPush(cmd, "-c");
+    }
+}
+
+char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *source, const char **cflags, const char **include_paths) {
+    int is_msvc = (tc->triple.vendor == JB_ENUM(Windows));
+
+    _JBCommandVector cmd = {0};
+
+    JBVectorPush(&cmd, (char *)tool);
+
+    if (is_msvc) {
+        JBVectorPush(&cmd, "/sourceDependencies");
+    }
+    else {
+        JBVectorPush(&cmd, "-MM");
+    }
+
+    _jb_add_common_c_options(tc, &cmd, tool, cflags, include_paths);
+
     JBVectorPush(&cmd, (char *)source);
 
     JBVectorPush(&cmd, NULL);
@@ -1217,8 +1420,6 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *sou
 
 
     free(cmd.data);
-
-    free(triplet);
 
     if (!result)
         return NULL;
@@ -1310,35 +1511,21 @@ void jb_compile_c(JBTarget *target, JBToolchain *tc, const char *source, const c
 
     JB_LOG("compile %s\n", source);
 
-    JBVector(char *) cmd = {0};
+    _JBCommandVector cmd = {0};
 
     JBVectorPush(&cmd, tc->cc);
 
-    if (triplet && strstr(tc->cc, "clang") != NULL) {
-        JBVectorPush(&cmd, "-target");
-        JBVectorPush(&cmd, triplet);
+    _jb_add_common_c_options(tc, &cmd, tc->cc, cflags, include_paths);
+    int is_msvc = (tc->triple.vendor == JB_ENUM(Windows));
 
-        // JBVectorPush(&cmd, "--rtlib=compiler-rt");
+    if (is_msvc) {
+        JBVectorPush(&cmd, "/Fo:");
     }
-
-    if (tc->sysroot) {
-        // TODO check if Apple LD or GNU LD
-        // JBVectorPush(&cmd, "-syslibroot");
-        JBVectorPush(&cmd, "--sysroot");
-        JBVectorPush(&cmd, tc->sysroot);
+    else {
+        JBVectorPush(&cmd, "-o");
     }
-
-    JBNullArrayFor(cflags) {
-        JBVectorPush(&cmd, (char *)cflags[index]);
-    }
-
-    JBNullArrayFor(include_paths) {
-        JBVectorPush(&cmd, "-I");
-        JBVectorPush(&cmd, (char *)include_paths[index]);
-    }
-
-    JBVectorPush(&cmd, "-o");
     JBVectorPush(&cmd, (char *)output);
+
     JBVectorPush(&cmd, "-c");
     JBVectorPush(&cmd, (char *)source);
 
@@ -1383,35 +1570,21 @@ void jb_compile_cxx(JBTarget *target, JBToolchain *tc, const char *source, const
 
     JB_LOG("compile %s\n", source);
 
-    JBVector(char *) cmd = {0};
+    _JBCommandVector cmd = {0};
 
     JBVectorPush(&cmd, tc->cxx);
 
-    if (triplet && strstr(tc->cxx, "clang") != NULL) {
-        JBVectorPush(&cmd, "-target");
-        JBVectorPush(&cmd, triplet);
+    _jb_add_common_c_options(tc, &cmd, tc->cxx, cxxflags, include_paths);
 
-        // JBVectorPush(&cmd, "--rtlib=compiler-rt");
+    int is_msvc = (tc->triple.vendor == JB_ENUM(Windows));
+    if (is_msvc) {
+        JBVectorPush(&cmd, "/Fo:");
     }
-
-    if (tc->sysroot) {
-        // TODO check if Apple LD or GNU LD
-        // JBVectorPush(&cmd, "-syslibroot");
-        JBVectorPush(&cmd, "--sysroot");
-        JBVectorPush(&cmd, tc->sysroot);
+    else {
+        JBVectorPush(&cmd, "-o");
     }
-
-    JBNullArrayFor(cxxflags) {
-        JBVectorPush(&cmd, (char *)cxxflags[index]);
-    }
-
-    JBNullArrayFor(include_paths) {
-        JBVectorPush(&cmd, "-I");
-        JBVectorPush(&cmd, (char *)include_paths[index]);
-    }
-
-    JBVectorPush(&cmd, "-o");
     JBVectorPush(&cmd, (char *)output);
+
     JBVectorPush(&cmd, "-c");
     JBVectorPush(&cmd, (char *)source);
 
@@ -1497,12 +1670,13 @@ int _jb_supported_source_ext(const char *ext) {
 }
 
 void _jb_init_build(const char *build_folder, const char *object_folder)  {
-    JB_RUN_CMD("mkdir", "-p", build_folder);
-    JB_RUN_CMD("mkdir", "-p", object_folder);
+    jb_mkdir(build_folder);
+    jb_mkdir(object_folder);
 }
 
 char **_jb_collect_objects(JBTarget *target, JBToolchain *tc, const char *object_folder) {
     const char **sources = target->sources;
+    int is_msvc = (tc->triple.vendor == JB_ENUM(Windows));
 
     JBVector(char *) object_files = {0};
 
@@ -1513,10 +1687,11 @@ char **_jb_collect_objects(JBTarget *target, JBToolchain *tc, const char *object
 
         JB_ASSERT(ext && _jb_supported_source_ext(ext), "unsupported file type: %s", ext ? ext : "unknown");
 
-        char *object = jb_concat(object_folder, filename);
+        const char *o_ext = "o";
+        if (is_msvc)
+            o_ext = "obj";
 
-        char *o_ext = object+strlen(object)-strlen(ext);
-        memcpy(o_ext, "o", 2); // 2 to include NULL byte
+        char *object = jb_format_string("%s%.*s%s", object_folder, strlen(filename)-strlen(ext), filename, o_ext);
 
         if (strcmp(ext, "c") == 0 || strcmp(ext, "m") == 0)
             jb_compile_c(target, tc, sources[index], object);
@@ -1578,12 +1753,17 @@ int _jb_need_to_build_target(const char *target, char **object_files) {
 void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldflags, const char **frameworks, char *output_exec, char **object_files, JBLibrary **libs, int is_lib) {
 
     char *triplet = jb_get_triple(tc);
+    int is_msvc = (tc->triple.vendor == JB_ENUM(Windows));
 
     JB_LOG("link %s\n", output_exec);
 
     JBVector(char *) cmd = {0};
 
     JBVectorPush(&cmd, (char *)link_command);
+
+    if (is_msvc) {
+        JBVectorPush(&cmd, "/nologo");
+    }
 
     if (strstr(link_command, "clang") != NULL) {
         JBVectorPush(&cmd, "-fuse-ld=lld");
@@ -1609,7 +1789,12 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
         JBVectorPush(&cmd, "-shared");
     }
 
-    JBVectorPush(&cmd, "-o");
+    if (is_msvc) {
+        JBVectorPush(&cmd, "/Fe:");
+    }
+    else {
+        JBVectorPush(&cmd, "-o");
+    }
     JBVectorPush(&cmd, output_exec); // Leak
 
     JBNullArrayFor(object_files) {
@@ -1850,6 +2035,136 @@ void jb_build_lib(JBLibrary *target) {
     free(output_exec);
 }
 
+#if JB_IS_WINDOWS
+
+char *_jb_convert_path_slashes(const char *path) {
+    char *out = jb_copy_string(path);
+    path = out;
+
+    while (*path) {
+        if (*path == '\\')
+            *(char *)path = '/';
+        path += 1;
+    }
+
+    return out;
+}
+
+char *_jb_unconvert_path_slashes(const char *path) {
+    char *out = jb_copy_string(path);
+    path = out;
+
+    while (*path) {
+        if (*path == '/')
+            *(char *)path = '\\';
+        path += 1;
+    }
+
+    return out;
+}
+
+int jb_file_exists(const char *path) {
+    path = _jb_unconvert_path_slashes(path);
+    DWORD attrib = GetFileAttributesA(path);
+    free((char *)path);
+    return attrib != INVALID_FILE_ATTRIBUTES;
+}
+
+char *jb_file_fullpath(const char *path) {
+    path = _jb_unconvert_path_slashes(path);
+
+    DWORD bytes = GetFullPathNameA(path, 0, NULL, NULL);
+
+    if (bytes == 0) {
+        free((char *)path);
+        return NULL;
+    }
+
+    char *buffer = malloc(bytes);
+    DWORD result = GetFullPathNameA(path, bytes, buffer, NULL);
+
+    JB_ASSERT(bytes >= result, "did not allocate enough bytes for jb_file_fullpath");
+
+    char *output = _jb_convert_path_slashes(buffer);
+    free(buffer);
+    free((char *)path);
+    return output;
+}
+
+char *jb_getcwd() {
+    DWORD bytes = GetCurrentDirectory(0, NULL);
+
+    char *buffer = malloc(bytes);
+
+    DWORD result = GetCurrentDirectory(bytes, buffer);
+
+    JB_ASSERT(bytes >= result, "did not allocate enough bytes for jb_getcwd");
+    char *output = _jb_convert_path_slashes(buffer);
+    free(buffer);
+    return output;
+}
+
+FILETIME _jb_get_last_mod_time(const char *path) {
+    if (!jb_file_exists(path))
+        return (FILETIME){0};
+
+    path = _jb_unconvert_path_slashes(path);
+    HANDLE file = CreateFileA(path, 0, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    free((char *)path);
+
+    if (file == INVALID_HANDLE_VALUE) {
+        return (FILETIME){0};
+    }
+
+    FILETIME last_write = {};
+    if (!GetFileTime(file, NULL, NULL, &last_write)) {
+        jb_log("GetFileTime failed\n");
+        CloseHandle(file);
+        return (FILETIME){0};
+    }
+
+    CloseHandle(file);
+
+    return last_write;
+}
+
+int jb_file_is_newer(const char *source, const char *dest) {
+    JB_ASSERT(jb_file_exists(source), "file not found: %s", source);
+
+    FILETIME s = _jb_get_last_mod_time(source);
+    FILETIME d = _jb_get_last_mod_time(dest);
+
+    return CompareFileTime(&s, &d) > 0;
+}
+
+void jb_mkdir(const char *path) {
+    char *copy = jb_copy_string(path);
+
+    JBVector(char *) paths = {};
+
+    do {
+        JBVectorPush(&paths, copy);
+        char *newstr = jb_drop_last_path_component(copy);
+        copy = newstr;
+    } while (strrchr(copy, JB_PATH_SEPARATOR));
+
+    jb_log("mkdir with %zu sub directories\n", paths.count);
+
+    JBVectorForReverse(&paths) {
+        char *p = paths.data[index];
+
+        if (!CreateDirectoryA(p, NULL)) {
+            DWORD error = GetLastError();
+
+            JB_ASSERT(error == ERROR_ALREADY_EXISTS, "could not create directory %s", p);
+        }
+
+        free(p);
+    }
+}
+
+#else
+
 int jb_file_exists(const char *path) {
     return access(path, F_OK) == 0;
 }
@@ -1868,7 +2183,7 @@ char *jb_getcwd() {
     return NULL;
 }
 
-struct timespec jb_get_last_mod_time(const char *path) {
+struct timespec _jb_get_last_mod_time(const char *path) {
     if (!jb_file_exists(path))
         return (struct timespec){0};
 
@@ -1887,8 +2202,8 @@ int jb_file_is_newer(const char *source, const char *dest) {
 
     JB_ASSERT(jb_file_exists(source), "file not found: %s", source);
 
-    struct timespec s = jb_get_last_mod_time(source);
-    struct timespec d = jb_get_last_mod_time(dest);
+    struct timespec s = _jb_get_last_mod_time(source);
+    struct timespec d = _jb_get_last_mod_time(dest);
 
     if (s.tv_sec == d.tv_sec) {
         return s.tv_nsec > d.tv_nsec;
@@ -1896,6 +2211,12 @@ int jb_file_is_newer(const char *source, const char *dest) {
 
     return s.tv_sec > d.tv_sec;
 }
+
+void jb_mkdir(const char *path) {
+    JB_RUN_CMD("mkdir", "-p", path);
+}
+
+#endif // JB_IS_WINDOWS
 
 const char *_jb_toolchain_dir = "toolchains";
 
@@ -2056,10 +2377,17 @@ JBToolchain *jb_native_toolchain() {
     tc.triple.vendor = JB_DEFAULT_VENDOR;
     tc.triple.runtime = JB_DEFAULT_RUNTIME;
 
+#if JB_IS_WINDOWS
+    tc.cc = "cl";
+    tc.cxx = "cl";
+    tc.ld = "link";
+    tc.ar = "lib";
+#else
     tc.cc = "gcc";
     tc.cxx = "g++";
     tc.ld = "ld";
     tc.ar = "ar";
+#endif
 
 #if JB_IS_MACOS
     tc.sysroot = "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk";

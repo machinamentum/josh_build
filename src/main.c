@@ -97,13 +97,10 @@ int main(int argc, char *argv[]) {
             JB_FAIL("file not found: %s", name);
         }
 
-        char *rpath = malloc(PATH_MAX+1);
-        rpath[PATH_MAX+1] = 0;
-        if (realpath(name, rpath) == rpath) {
-            name = rpath; // @Leak
+        char *fullpath = jb_file_fullpath(name);
+        if (fullpath) {
+            name = fullpath; // @Leak
         }
-        else
-            free(rpath);
 
         JBVector(char *) args = {0};
 
@@ -127,13 +124,10 @@ int main(int argc, char *argv[]) {
             JB_FAIL("file not found: %s", name);
         }
 
-        char *rpath = malloc(PATH_MAX+1);
-        rpath[PATH_MAX+1] = 0;
-        if (realpath(name, rpath) == rpath) {
-            name = rpath; // @Leak
+        char *fullpath = jb_file_fullpath(name);
+        if (fullpath) {
+            name = fullpath; // @Leak
         }
-        else
-            free(rpath);
 
         JBVector(char *) args = {0};
 
@@ -156,7 +150,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (strcmp(argv[index], "init") == 0) {
-        JB_RUN(mkdir -p src);
+        jb_mkdir("src");
 
         if (jb_file_exists("build.josh"))
             JB_FAIL("build.josh already exists. Aborting\n");
@@ -171,7 +165,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (strcmp(argv[index], "init-freestanding") == 0) {
-        JB_RUN(mkdir -p src);
+        jb_mkdir("src");
 
         if (jb_file_exists("build.josh"))
             JB_FAIL("build.josh already exists. Aborting\n");
@@ -194,7 +188,10 @@ int main(int argc, char *argv[]) {
 
         {
             write_file("build.sh", "mkdir -p build && gcc -o build/josh_builder -x c build.josh && ./build/josh_builder\n");
+            write_file("build.bat", "mkdir build\ncl -o build/josh_builder /Tc build.josh || exit /b\n .\\build\\josh_builder\n");
+#if !JB_IS_WINDOWS
             JB_RUN(chmod +x build.sh);
+#endif
         }
 
         if (jb_file_exists("src/main.c"))
