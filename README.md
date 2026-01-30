@@ -17,7 +17,13 @@ Usually there is a combination of:
 
 ## Build
 
+### Unix (mac, linux)
+
 Run `./bootstrap.sh` to build the `josh` driver. For fun, `./build/josh build` will build the driver again but using the josh build system in `build.josh`.
+
+### Windows
+
+Either from a Visual Studio Developer Command Prompt, or after running vcvarsall.bat or VsDevCmd.bat, run "bootstrap.bat" to build the `josh` driver.
 
 ## Usage
 
