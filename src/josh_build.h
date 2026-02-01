@@ -163,6 +163,11 @@ typedef struct JBTarget {
 #define JB_LIBRARY_STATIC (0 << 0)
 #define JB_LIBRARY_SHARED (1 << 0)
 
+// if specified, uses the generated object files of the library instead of
+// the generated library archive/executable, when linking this library against
+// an executable.
+#define JB_LIBRARY_USE_OBJECTS (1 << 1)
+
 typedef struct JBLibrary {
     _JB_TARGET_HEADER_COMMON;
 
@@ -1737,6 +1742,11 @@ int _jb_target_has_cpp_source(JBTarget *target) {
 }
 
 char *_jb_get_link_command(JBToolchain *tc, JBTarget *target) {
+    int is_msvc = (tc->triple.vendor == JB_ENUM(Windows));
+
+    if (is_msvc)
+        return tc->ld;
+
     char *link_command = tc->cc;
 
     if (_jb_target_has_cpp_source(target))
@@ -1754,6 +1764,8 @@ int _jb_need_to_build_target(const char *target, char **object_files) {
 
     return 0;
 }
+
+char **_jb_get_library_objects(JBLibrary *target);
 
 void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldflags, const char **frameworks, char *output_exec, char **object_files, JBLibrary **libs, int is_lib) {
 
@@ -1795,12 +1807,19 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
     }
 
     if (is_msvc) {
-        JBVectorPush(&cmd, "/Fe:");
+        // TODO check if cl.exe or link.exe is linker
+
+        // cl.exe
+        // JBVectorPush(&cmd, "/Fe:");
+        // JBVectorPush(&cmd, output_exec); // Leak
+
+        // link.exe
+        JBVectorPush(&cmd, jb_format_string("/OUT:%s", output_exec)); // Leak
     }
     else {
         JBVectorPush(&cmd, "-o");
+        JBVectorPush(&cmd, output_exec); // Leak
     }
-    JBVectorPush(&cmd, output_exec); // Leak
 
     JBNullArrayFor(object_files) {
         JBVectorPush(&cmd, object_files[index]);
@@ -1832,8 +1851,26 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
     JBNullArrayFor(libs) {
         JBLibrary *lib = libs[index];
 
-        JBVectorPush(&cmd, jb_format_string("-L%s", lib->build_folder));
-        JBVectorPush(&cmd, jb_format_string("-l%s", lib->name));
+        // Leak
+        if (lib->flags & JB_LIBRARY_USE_OBJECTS) {
+            char **object_files = _jb_get_library_objects(lib); // Leak
+
+            JBNullArrayFor(object_files) {
+                char *obj = object_files[index];
+
+                JBVectorPush(&cmd, obj);
+            }
+        }
+        else {
+            if (is_msvc) {
+                JBVectorPush(&cmd, jb_format_string("/LIBPATH:%s", lib->build_folder));
+                JBVectorPush(&cmd, jb_format_string("%s.lib", lib->name));
+            }
+            else {
+                JBVectorPush(&cmd, jb_format_string("-L%s", lib->build_folder));
+                JBVectorPush(&cmd, jb_format_string("-l%s", lib->name));
+            }
+        }
     }
 
 #if JB_IS_LINUX
@@ -1881,7 +1918,8 @@ void jb_build_exe(JBExecutable *exec) {
 
     char *link_command = _jb_get_link_command(tc, (JBTarget *)exec);
 
-    char *output_exec = jb_concat(exec->build_folder, jb_concat("/", exec->name));
+    int is_msvc = (tc->triple.vendor == JB_ENUM(Windows));
+    char *output_exec = jb_format_string("%s/%s%s", exec->build_folder, exec->name, is_msvc ? ".exe" : "");
 
     int needs_build = 0;
 
@@ -1960,6 +1998,16 @@ char *_jb_library_output_file(JBLibrary *target) {
     return output_exec;
 }
 
+char **_jb_get_library_objects(JBLibrary *target) {
+    char *object_folder = jb_concat(target->build_folder, "/object/");
+
+    JBToolchain *tc = target->toolchain ? target->toolchain : jb_native_toolchain();
+    char **object_files = _jb_collect_objects((JBTarget *)target, tc, object_folder);
+
+    free(object_folder);
+    return object_files;
+}
+
 void jb_build_lib(JBLibrary *target) {
 
     char *object_folder = jb_concat(target->build_folder, "/object/");
@@ -2007,6 +2055,8 @@ void jb_build_lib(JBLibrary *target) {
         }
         else {
             char *triplet = jb_get_triple(tc);
+            int is_msvc = (tc->triple.vendor == JB_ENUM(Windows));
+
             JB_ASSERT(tc->ar, "Toolchain (%s) missing AR", triplet);
 
             JB_LOG("built %s\n", output_exec);
@@ -2015,9 +2065,14 @@ void jb_build_lib(JBLibrary *target) {
 
             JBVectorPush(&cmd, tc->ar);
 
-            JBVectorPush(&cmd, "rcs");
-
-            JBVectorPush(&cmd, output_exec);
+            if (is_msvc) {
+                JBVectorPush(&cmd, "/nologo");
+                JBVectorPush(&cmd, jb_format_string("/OUT:%s", output_exec)); // Leak
+            }
+            else {
+                JBVectorPush(&cmd, "rcs");
+                JBVectorPush(&cmd, output_exec);
+            }
 
             JBNullArrayFor(object_files) {
                 JBVectorPush(&cmd, object_files[index]);
