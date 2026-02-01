@@ -153,6 +153,7 @@ char *jb_toolchain_find_tool(JBToolchain *toolchain, const char *tool);
     const char **asflags; \
     const char **include_paths; \
     const char **frameworks; /* only applies to apple targets */ \
+    const char **system_libraries; \
     struct JBLibrary **libraries; \
     JBToolchain *toolchain
 
@@ -1767,7 +1768,7 @@ int _jb_need_to_build_target(const char *target, char **object_files) {
 
 char **_jb_get_library_objects(JBLibrary *target);
 
-void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldflags, const char **frameworks, char *output_exec, char **object_files, JBLibrary **libs, int is_lib) {
+void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldflags, const char **frameworks, char *output_exec, char **object_files, JBLibrary **libs, char **system_libs, int is_lib) {
 
     char *triplet = jb_get_triple(tc);
     int is_msvc = (tc->triple.vendor == JB_ENUM(Windows));
@@ -1873,6 +1874,18 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
         }
     }
 
+    JBNullArrayFor(system_libs) {
+        char *lib = system_libs[index];
+
+        // Leak
+        if (is_msvc) {
+            JBVectorPush(&cmd, jb_format_string("%s.lib", lib));
+        }
+        else {
+            JBVectorPush(&cmd, jb_format_string("-l%s", lib));
+        }
+    }
+
 #if JB_IS_LINUX
     // TODO more robust detection for gnu-ld and target-triple + toolchain
     if (strstr(link_command, "gcc")) {
@@ -1940,7 +1953,7 @@ void jb_build_exe(JBExecutable *exec) {
         needs_build = _jb_need_to_build_target(output_exec, object_files);
 
     if (needs_build) {
-        _jb_link_shared(tc, link_command, exec->ldflags, exec->frameworks, output_exec, object_files, exec->libraries, 0);
+        _jb_link_shared(tc, link_command, exec->ldflags, exec->frameworks, output_exec, object_files, exec->libraries, exec->system_libraries, 0);
     }
 
     JBNullArrayFor(object_files)
@@ -2051,7 +2064,7 @@ void jb_build_lib(JBLibrary *target) {
 
     if (needs_build) {
         if (target->flags & JB_LIBRARY_SHARED) {
-            _jb_link_shared(tc, link_command, target->ldflags, target->frameworks, output_exec, object_files, target->libraries, 1);
+            _jb_link_shared(tc, link_command, target->ldflags, target->frameworks, output_exec, object_files, target->libraries, target->system_libraries, 1);
         }
         else {
             char *triplet = jb_get_triple(tc);
