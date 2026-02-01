@@ -1768,7 +1768,7 @@ int _jb_need_to_build_target(const char *target, char **object_files) {
 
 char **_jb_get_library_objects(JBLibrary *target);
 
-void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldflags, const char **frameworks, char *output_exec, char **object_files, JBLibrary **libs, char **system_libs, int is_lib) {
+void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldflags, const char **frameworks, char *output_exec, char **object_files, JBLibrary **libs, const char **system_libs, int is_lib) {
 
     char *triplet = jb_get_triple(tc);
     int is_msvc = (tc->triple.vendor == JB_ENUM(Windows));
@@ -1875,7 +1875,7 @@ void _jb_link_shared(JBToolchain *tc, const char *link_command, const char **ldf
     }
 
     JBNullArrayFor(system_libs) {
-        char *lib = system_libs[index];
+        const char *lib = system_libs[index];
 
         // Leak
         if (is_msvc) {
