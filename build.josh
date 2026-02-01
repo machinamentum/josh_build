@@ -22,6 +22,11 @@ int main(int argc, char *argv[]) {
 
     const char **sources = JB_STRING_ARRAY("src/main.c");
     const char **cflags = JB_STRING_ARRAY("-Wall", "-Itools");
+    const char **includes = JB_STRING_ARRAY("tools");
+
+    if (JB_IS_WINDOWS) {
+        cflags = JB_STRING_ARRAY("/W3", "/std:c11");
+    }
 
     {
         jb_generate_embed("src/josh_build.h", "src/josh_build_embed.h");
@@ -33,6 +38,7 @@ int main(int argc, char *argv[]) {
         JBExecutable josh = {"josh"};
         josh.sources = sources;
         josh.cflags = cflags;
+        josh.include_paths = includes;
         josh.build_folder = "build";
         jb_build_exe(&josh);
     }

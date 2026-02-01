@@ -32,6 +32,11 @@
 #ifndef JOSH_BUILD_H
 #define JOSH_BUILD_H
 
+#ifdef _WIN32
+#define _CRT_SECURE_NO_WARNINGS
+#define _CRT_NONSTDC_NO_WARNINGS
+#endif
+
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
@@ -378,6 +383,8 @@ void jb_log_print(const char *fmt, ...);
 #if JB_IS_WINDOWS
 
 #include <Windows.h>
+#include <direct.h> // chdir
+#include <io.h> // open, close, write, _commit
 
 #else
 
