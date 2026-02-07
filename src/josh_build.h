@@ -231,6 +231,8 @@ int jb_file_exists(const char *path);
 
 char *jb_file_fullpath(const char *path);
 
+void jb_copy_file(const char *oldpath, const char *newpath);
+
 void jb_mkdir(const char *path);
 
 // Generates #embed-style text in output_file based on the contents of input_file
@@ -2150,6 +2152,14 @@ int jb_file_exists(const char *path) {
     return attrib != INVALID_FILE_ATTRIBUTES;
 }
 
+void jb_copy_file(const char *_oldpath, const char *_newpath) {
+    char *oldpath = _jb_unconvert_path_slashes(_oldpath);
+    char *newpath = _jb_unconvert_path_slashes(_newpath);
+
+    BOOL result = CopyFileA(oldpath, newpath, FALSE);
+    JB_ASSERT(result, "could not copy file %s to %s", _oldpath, _newpath);
+}
+
 char *jb_file_fullpath(const char *path) {
     path = _jb_unconvert_path_slashes(path);
 
@@ -2251,6 +2261,10 @@ int jb_file_exists(const char *path) {
 
 char *jb_file_fullpath(const char *path) {
     return realpath(path, NULL);
+}
+
+void jb_copy_file(const char *_oldpath, const char *_newpath) {
+    JB_RUN(cp, _oldpath, _newpath);
 }
 
 char *jb_getcwd() {
