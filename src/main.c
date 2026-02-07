@@ -49,7 +49,17 @@ void write_file(const char *path, const char *text) {
 }
 
 void dump_library(FILE *file) {
-    fputs(_jb_josh_build_src, file);
+    {
+        const char *p = _jb_josh_build_src;
+        while (*p) {
+            // skip writting \r bytes to avoid mixing \r\n and \n-only in the same file
+            if (*p != '\r')
+                fputc(*p, file);
+
+            p++;
+        }
+    }
+
     fputs("#ifdef JOSH_BUILD_IMPL\n", file);
     fputs("const char _jb_josh_build_src[] = {\n", file);
 
