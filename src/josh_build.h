@@ -174,6 +174,9 @@ typedef struct JBTarget {
 // an executable.
 #define JB_LIBRARY_USE_OBJECTS (1 << 1)
 
+// internal
+#define _JB_LIBRARY_JUST_BUILT (1 << 2) // if flagged, we just built this library, so skip some dependency checks
+
 typedef struct JBLibrary {
     _JB_TARGET_HEADER_COMMON;
 
@@ -2084,6 +2087,8 @@ char **_jb_get_library_objects(JBLibrary *target) {
 }
 
 void jb_build_lib(JBLibrary *target) {
+    if (target->flags & _JB_LIBRARY_JUST_BUILT)
+        return;
 
     char *object_folder = jb_concat(target->build_folder, "/object/");
 
@@ -2160,6 +2165,8 @@ void jb_build_lib(JBLibrary *target) {
             free(triplet);
         }
     }
+
+    target->flags |= _JB_LIBRARY_JUST_BUILT;
 
     JBNullArrayFor(object_files) {
         free(object_files[index]);
