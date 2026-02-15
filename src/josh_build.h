@@ -1414,6 +1414,9 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *sou
 
     if (is_msvc) {
         JBVectorPush(&cmd, "/sourceDependencies-"); // '-' at the end dumps to stdout
+        // tells compiler to do syntax check only (prevents generating .obj file)
+        // Thankfully, as of 19.50 toolchain, this option still enables /sourceDependencies to generate output
+        JBVectorPush(&cmd, "/Zs");
     }
     else {
         JBVectorPush(&cmd, "-MM");
