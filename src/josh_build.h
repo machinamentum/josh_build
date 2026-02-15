@@ -1442,48 +1442,98 @@ char **_jb_get_dependencies_c(JBToolchain *tc, const char *tool, const char *sou
     if (!result)
         return NULL;
 
-    if (is_msvc) {
-        // TODO implement parsing for MSVC /sourceDependencies JSON output
-        return NULL;
-    }
-
-    for (int i = 0; result[i]; i++) {
-        char n = result[i+1];
-        if (result[i] == '\\' && (n == '\r' || n == '\n')) {
-            result[i] = ' ';
-        }
-    }
-
     JBVector(char *) out = {0};
 
-    char *start = strchr(result, ':')+1;
+    if (is_msvc) {
+        // TODO implement proper JSON parsing of /sourceDependencies
+        // Here's a hacky solution: search for __"Includes": [__ string in result
+        // then for each line following, search for first " and ending ",
 
-    while (*start) {
-        while (*start && jb_iswhitespace(*start))
-            start += 1;
+        const char *SOURCE_TOKEN = "\"Source\":";
+        char *source = strstr(result, SOURCE_TOKEN);
+        if (!source)
+            return NULL;
 
-        if (*start) {
-            char *end = start;
+        {
+            source += strlen(SOURCE_TOKEN);
+            source = strchr(source, '\"');
 
-            while (*end) {
+            if (!source)
+                return NULL;
 
-                {
-                    if (*end == '\\' && *(end + 1) != 0) {
-                        end += 2;
-                        continue;
-                    }
-                }
+            source += 1;
 
-                if (jb_iswhitespace(*end))
-                    break;
+            char *end = strstr(source, "\",");
+            if (!end)
+                return NULL;
 
-                end += 1;
-            }
+            char *entry = jb_format_string("%.*s", end-source, source);
+            JBVectorPush(&out, entry);
+        }
 
-            char *entry = jb_format_string("%.*s", end-start, start);
+        const char *INCLUDES_TOKEN = "\"Includes\": [";
+        char *includes = strstr(result, INCLUDES_TOKEN);
+
+        if (!includes)
+            return NULL;
+
+        includes += strlen(INCLUDES_TOKEN);
+
+        while (1) {
+            includes = strchr(includes, '\"');
+
+            if (!includes)
+                break;
+
+            includes += 1;
+
+            char *end = strstr(includes, "\"");
+            if (!end)
+                break;
+
+            char *entry = jb_format_string("%.*s", end-includes, includes);
             JBVectorPush(&out, entry);
 
-            start = end;
+            includes = end + 2;
+        }
+    }
+    else {
+        for (int i = 0; result[i]; i++) {
+            char n = result[i+1];
+            if (result[i] == '\\' && (n == '\r' || n == '\n')) {
+                result[i] = ' ';
+            }
+        }
+
+        char *start = strchr(result, ':')+1;
+
+        while (*start) {
+            while (*start && jb_iswhitespace(*start))
+                start += 1;
+
+            if (*start) {
+                char *end = start;
+
+                while (*end) {
+
+                    {
+                        if (*end == '\\' && *(end + 1) != 0) {
+                            end += 2;
+                            continue;
+                        }
+                    }
+
+                    if (jb_iswhitespace(*end))
+                        break;
+
+                    end += 1;
+                }
+
+                char *entry = jb_format_string("%.*s", end-start, start);
+                JBVectorPush(&out, entry);
+
+                start = end;
+            }
         }
     }
 
