@@ -2672,6 +2672,7 @@ char *jb_sb_to_string(JBStringBuilder *sb) {
 
     JBArrayForEach(&sb->arenas) {
         memcpy(out + off, it->mem, it->current);
+        off += it->current;
     }
 
     out[total-1] = 0;
